@@ -1,0 +1,81 @@
+MEDICAL CASE STUDY: CHEST PAIN EVALUATION
+
+Patient Presentation:
+A 55-year-old male presents to the emergency department with acute onset chest pain that began 2 hours ago while at rest. The pain is described as a crushing, substernal pressure that radiates to the left arm and jaw. The patient rates the pain as 8/10 in severity.
+
+Vital Signs:
+- Blood Pressure: 160/95 mmHg
+- Heart Rate: 95 bpm
+- Respiratory Rate: 22/min
+- Temperature: 98.6°F
+- Oxygen Saturation: 96% on room air
+
+Past Medical History:
+- Hypertension (diagnosed 5 years ago)
+- Type 2 Diabetes Mellitus (diagnosed 3 years ago)
+- Hyperlipidemia
+- Family history of coronary artery disease (father had MI at age 60)
+
+Current Medications:
+- Metformin 1000mg twice daily
+- Lisinopril 10mg daily
+- Atorvastatin 20mg daily
+
+Physical Examination:
+- General: Anxious appearing male in moderate distress
+- Cardiovascular: Regular rate and rhythm, no murmurs, rubs, or gallops
+- Lungs: Clear to auscultation bilaterally
+- Extremities: No edema, pulses intact
+- Neurological: Alert and oriented x3
+
+Initial Laboratory Results:
+- Troponin I: 0.8 ng/mL (elevated, normal <0.04)
+- CK-MB: 25 U/L (elevated, normal <5)
+- Total Cholesterol: 220 mg/dL
+- LDL: 140 mg/dL
+- HDL: 35 mg/dL
+- Triglycerides: 180 mg/dL
+- HbA1c: 8.2%
+
+ECG Findings:
+- Sinus rhythm at 95 bpm
+- ST elevation in leads II, III, aVF (inferior leads)
+- ST depression in leads I and aVL
+- Q waves beginning to form in leads III and aVF
+
+Diagnosis:
+Acute ST-Elevation Myocardial Infarction (STEMI) - Inferior wall
+
+Management Plan:
+1. Immediate reperfusion therapy with primary PCI
+2. Dual antiplatelet therapy (aspirin + clopidogrel)
+3. Anticoagulation with heparin
+4. Beta-blocker therapy (metoprolol)
+5. ACE inhibitor therapy
+6. Statin therapy
+7. Blood glucose management
+8. Pain control with morphine
+
+Key Learning Points:
+- ST elevation in inferior leads (II, III, aVF) indicates inferior wall MI
+- Reciprocal ST depression in lateral leads (I, aVL) supports the diagnosis
+- Elevated cardiac enzymes confirm myocardial necrosis
+- Time is muscle - early reperfusion is critical
+- Risk factors include diabetes, hypertension, and family history
+- Dual antiplatelet therapy reduces risk of stent thrombosis
+- Beta-blockers reduce myocardial oxygen demand
+- ACE inhibitors improve long-term outcomes post-MI
+
+Complications to Monitor:
+- Arrhythmias (especially bradycardia with inferior MI)
+- Heart failure
+- Cardiogenic shock
+- Recurrent ischemia
+- Bleeding complications from antithrombotic therapy
+
+Follow-up Care:
+- Cardiology consultation
+- Echocardiogram to assess wall motion abnormalities
+- Cardiac rehabilitation program
+- Aggressive risk factor modification
+- Regular follow-up with cardiologist
