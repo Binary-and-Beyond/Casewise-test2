@@ -20,6 +20,7 @@ interface AuthContextType {
     password: string,
     fullName?: string
   ) => Promise<void>;
+  googleAuth: (idToken: string) => Promise<void>;
   logout: () => void;
   isAuthenticated: boolean;
   refreshToken: () => Promise<boolean>;
@@ -122,6 +123,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   };
 
+  const googleAuth = async (idToken: string) => {
+    try {
+      const response: AuthResponse = await apiService.googleAuth(idToken);
+
+      // Store token
+      localStorage.setItem("auth_token", response.access_token);
+      setToken(response.access_token);
+
+      // Get user data
+      const userData = await apiService.getCurrentUser();
+      setUser(userData);
+    } catch (error) {
+      throw error;
+    }
+  };
+
   const refreshToken = async (): Promise<boolean> => {
     const storedToken = localStorage.getItem("auth_token");
     if (!storedToken) {
@@ -161,6 +178,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     isLoading,
     login,
     signup,
+    googleAuth,
     logout,
     refreshToken,
     refreshUser,

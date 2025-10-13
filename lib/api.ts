@@ -1,4 +1,5 @@
 import { config } from "./config";
+import { handleRateLimit } from "./rate-limiter";
 
 const API_BASE_URL = config.API_BASE_URL;
 console.log(API_BASE_URL);
@@ -81,12 +82,22 @@ export interface ChatSession {
   updated_at: string;
   user_id: string;
   document_id?: string;
+  document_filename?: string;
+  document_content_preview?: string;
   message_count: number;
+  // Context fields for case/concept specific chats
+  case_title?: string;
+  concept_title?: string;
+  parent_chat_id?: string;
 }
 
 export interface CreateChatRequest {
   name?: string;
   document_id?: string;
+  // Context fields for case/concept specific chats
+  case_title?: string;
+  concept_title?: string;
+  parent_chat_id?: string;
 }
 
 // New chatbot interfaces
@@ -127,6 +138,7 @@ export interface Concept {
   title: string;
   description: string;
   importance: string;
+  case_title?: string;
 }
 
 export interface ConceptResponse {
@@ -207,6 +219,13 @@ class ApiService {
 
   private getHeaders(): HeadersInit {
     const token = this.getAuthToken();
+    console.log("🔍 API Headers - Token present:", !!token);
+    console.log("🔍 API Headers - Token length:", token?.length || 0);
+    console.log(
+      "🔍 API Headers - Token preview:",
+      token ? `${token.substring(0, 20)}...` : "None"
+    );
+
     return {
       "Content-Type": "application/json",
       ...(token && { Authorization: `Bearer ${token}` }),
@@ -215,6 +234,15 @@ class ApiService {
 
   private async handleResponse<T>(response: Response): Promise<T> {
     if (!response.ok) {
+      console.error("🚨 API Error Response:");
+      console.error("🚨 Status:", response.status);
+      console.error("🚨 Status Text:", response.statusText);
+      console.error("🚨 URL:", response.url);
+      console.error(
+        "🚨 Headers:",
+        Object.fromEntries(response.headers.entries())
+      );
+
       // Handle CORS errors specifically
       if (response.status === 0 || response.type === "opaque") {
         throw new Error(
@@ -233,14 +261,26 @@ class ApiService {
 
       // Handle other HTTP errors
       let errorMessage = `HTTP error! status: ${response.status}`;
+      let errorDetails = null;
+
       try {
         const error = await response.json();
+        errorDetails = error;
         errorMessage = error.detail || error.message || errorMessage;
-      } catch {
-        // If we can't parse the error response, use the status text
-        errorMessage = response.statusText || errorMessage;
+        console.error("🚨 Error Details:", error);
+      } catch (parseError) {
+        console.error("🚨 Could not parse error response as JSON:", parseError);
+        try {
+          const errorText = await response.text();
+          console.error("🚨 Error Response Text:", errorText);
+          errorMessage = errorText || response.statusText || errorMessage;
+        } catch (textError) {
+          console.error("🚨 Could not read error response as text:", textError);
+          errorMessage = response.statusText || errorMessage;
+        }
       }
 
+      console.error("🚨 Final Error Message:", errorMessage);
       throw new Error(errorMessage);
     }
     return response.json();
@@ -278,6 +318,25 @@ class ApiService {
     });
 
     console.log("Response status:", response.status);
+    return this.handleResponse<AuthResponse>(response);
+  }
+
+  async googleAuth(idToken: string): Promise<AuthResponse> {
+    console.log("🔥 FRONTEND: About to call Google auth");
+    console.log("URL:", `${API_BASE_URL}/auth/google`);
+
+    const response = await fetch(`${API_BASE_URL}/auth/google`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      mode: "cors",
+      credentials: "include",
+      body: JSON.stringify({ id_token: idToken }),
+    });
+
+    console.log("Google auth response status:", response.status);
     return this.handleResponse<AuthResponse>(response);
   }
 
@@ -491,6 +550,11 @@ class ApiService {
 
   // Chat session management
   async createChat(request: CreateChatRequest): Promise<ChatSession> {
+    console.log("🌐 API: Creating chat...");
+    console.log("🌐 API: Request data:", request);
+    console.log("🌐 API: Headers:", this.getHeaders());
+    console.log("🌐 API: URL:", `${API_BASE_URL}/chats`);
+
     const response = await fetch(`${API_BASE_URL}/chats`, {
       method: "POST",
       headers: this.getHeaders(),
@@ -498,16 +562,84 @@ class ApiService {
       credentials: "include",
       body: JSON.stringify(request),
     });
+
+    console.log("🌐 API: Create chat response status:", response.status);
+    console.log("🌐 API: Create chat response ok:", response.ok);
+
+    if (!response.ok) {
+      console.log(
+        "🌐 API: Create chat response not ok, trying to get error details..."
+      );
+      try {
+        const errorText = await response.text();
+        console.log("🌐 API: Create chat error response text:", errorText);
+      } catch (e) {
+        console.log("🌐 API: Could not read create chat error response");
+      }
+    }
+
+    return this.handleResponse<ChatSession>(response);
+  }
+
+  async getOrCreateContextChat(
+    request: CreateChatRequest
+  ): Promise<ChatSession> {
+    console.log("🌐 API: Getting or creating context chat...");
+    console.log("🌐 API: Request data:", request);
+    console.log("🌐 API: Headers:", this.getHeaders());
+    console.log("🌐 API: URL:", `${API_BASE_URL}/chats/context`);
+
+    const response = await fetch(`${API_BASE_URL}/chats/context`, {
+      method: "POST",
+      headers: this.getHeaders(),
+      mode: "cors",
+      credentials: "include",
+      body: JSON.stringify(request),
+    });
+
+    console.log("🌐 API: Context chat response status:", response.status);
+    console.log("🌐 API: Context chat response ok:", response.ok);
+
+    if (!response.ok) {
+      console.log(
+        "🌐 API: Context chat response not ok, trying to get error details..."
+      );
+      try {
+        const errorText = await response.text();
+        console.log("🌐 API: Context chat error response text:", errorText);
+      } catch (e) {
+        console.log("🌐 API: Could not read context chat error response");
+      }
+    }
+
     return this.handleResponse<ChatSession>(response);
   }
 
   async getUserChats(): Promise<ChatSession[]> {
+    console.log("🌐 API: Getting user chats...");
+    console.log("🌐 API: Headers:", this.getHeaders());
+    console.log("🌐 API: URL:", `${API_BASE_URL}/chats`);
+
     const response = await fetch(`${API_BASE_URL}/chats`, {
       method: "GET",
       headers: this.getHeaders(),
       mode: "cors",
       credentials: "include",
     });
+
+    console.log("🌐 API: Response status:", response.status);
+    console.log("🌐 API: Response ok:", response.ok);
+
+    if (!response.ok) {
+      console.log("🌐 API: Response not ok, trying to get error details...");
+      try {
+        const errorText = await response.text();
+        console.log("🌐 API: Error response text:", errorText);
+      } catch (e) {
+        console.log("🌐 API: Could not read error response");
+      }
+    }
+
     return this.handleResponse<ChatSession[]>(response);
   }
 
@@ -531,28 +663,123 @@ class ApiService {
     return this.handleResponse<{ message: string }>(response);
   }
 
+  async updateChatDocument(
+    chatId: string,
+    documentId: string
+  ): Promise<ChatSession> {
+    const response = await fetch(
+      `${API_BASE_URL}/chats/${chatId}/document?document_id=${documentId}`,
+      {
+        method: "PUT",
+        headers: this.getHeaders(),
+        mode: "cors",
+        credentials: "include",
+      }
+    );
+    return this.handleResponse<ChatSession>(response);
+  }
+
+  async saveGeneratedContent(
+    chatId: string,
+    content: any
+  ): Promise<{ message: string }> {
+    const response = await fetch(
+      `${API_BASE_URL}/chats/${chatId}/content/save`,
+      {
+        method: "POST",
+        headers: this.getHeaders(),
+        mode: "cors",
+        credentials: "include",
+        body: JSON.stringify(content),
+      }
+    );
+    return this.handleResponse<{ message: string }>(response);
+  }
+
+  async getGeneratedContent(chatId: string): Promise<{
+    cases: any[];
+    mcqs: any[];
+    concepts: any[];
+  }> {
+    console.log("🌐 API: Getting generated content for chat:", chatId);
+    console.log("🌐 API: Chat ID type:", typeof chatId);
+    console.log("🌐 API: Chat ID length:", chatId?.length);
+    console.log("🌐 API: URL:", `${API_BASE_URL}/chats/${chatId}/content`);
+
+    const response = await fetch(`${API_BASE_URL}/chats/${chatId}/content`, {
+      method: "GET",
+      headers: this.getHeaders(),
+      mode: "cors",
+      credentials: "include",
+    });
+
+    console.log("🌐 API: Get content response status:", response.status);
+    console.log("🌐 API: Get content response ok:", response.ok);
+
+    if (!response.ok) {
+      console.log(
+        "🌐 API: Get content response not ok, trying to get error details..."
+      );
+      try {
+        const errorText = await response.text();
+        console.log("🌐 API: Get content error response text:", errorText);
+      } catch (e) {
+        console.log("🌐 API: Could not read get content error response");
+      }
+    }
+
+    return this.handleResponse<{
+      cases: any[];
+      mcqs: any[];
+      concepts: any[];
+    }>(response);
+  }
+
   async sendChatMessageToSession(
     chatId: string,
     message: string,
     documentId?: string
   ): Promise<ChatMessage> {
-    const response = await fetch(`${API_BASE_URL}/chats/${chatId}/messages`, {
-      method: "POST",
-      headers: this.getHeaders(),
-      mode: "cors",
-      credentials: "include",
-      body: JSON.stringify({ message, document_id: documentId }),
+    return handleRateLimit(async () => {
+      const response = await fetch(`${API_BASE_URL}/chats/${chatId}/messages`, {
+        method: "POST",
+        headers: this.getHeaders(),
+        mode: "cors",
+        credentials: "include",
+        body: JSON.stringify({ message, document_id: documentId }),
+      });
+      return this.handleResponse<ChatMessage>(response);
     });
-    return this.handleResponse<ChatMessage>(response);
   }
 
   async getChatMessages(chatId: string): Promise<ChatMessage[]> {
+    console.log("🌐 API: Getting chat messages for chat:", chatId);
+    console.log("🌐 API: Chat ID type:", typeof chatId);
+    console.log("🌐 API: Chat ID length:", chatId?.length);
+    console.log("🌐 API: URL:", `${API_BASE_URL}/chats/${chatId}/messages`);
+
     const response = await fetch(`${API_BASE_URL}/chats/${chatId}/messages`, {
       method: "GET",
       headers: this.getHeaders(),
       mode: "cors",
       credentials: "include",
     });
+
+    console.log("🌐 API: Get messages response status:", response.status);
+    console.log("🌐 API: Get messages response ok:", response.ok);
+
+    if (!response.ok) {
+      console.log(
+        "🌐 API: Get messages response not ok, trying to get error details..."
+      );
+      try {
+        const errorText = await response.text();
+        console.log("🌐 API: Get messages error response text:", errorText);
+      } catch (e) {
+        console.log("🌐 API: Could not read get messages error response");
+      }
+    }
+
     return this.handleResponse<ChatMessage[]>(response);
   }
 
@@ -573,7 +800,7 @@ class ApiService {
 
   async generateMCQs(
     documentId?: string,
-    caseId?: string,
+    caseTitle?: string,
     numQuestions: number = 3
   ): Promise<MCQResponse> {
     const response = await fetch(`${API_BASE_URL}/ai/generate-mcqs`, {
@@ -583,7 +810,7 @@ class ApiService {
       credentials: "include",
       body: JSON.stringify({
         document_id: documentId,
-        case_id: caseId,
+        case_title: caseTitle,
         num_questions: numQuestions,
       }),
     });
@@ -610,14 +837,16 @@ class ApiService {
   async autoGenerateContent(
     request: AutoGenerationRequest
   ): Promise<AutoGenerationResponse> {
-    const response = await fetch(`${API_BASE_URL}/ai/auto-generate`, {
-      method: "POST",
-      headers: this.getHeaders(),
-      mode: "cors",
-      credentials: "include",
-      body: JSON.stringify(request),
+    return handleRateLimit(async () => {
+      const response = await fetch(`${API_BASE_URL}/ai/auto-generate`, {
+        method: "POST",
+        headers: this.getHeaders(),
+        mode: "cors",
+        credentials: "include",
+        body: JSON.stringify(request),
+      });
+      return this.handleResponse<AutoGenerationResponse>(response);
     });
-    return this.handleResponse<AutoGenerationResponse>(response);
   }
 
   async quickGenerateContent(request: AutoGenerationRequest): Promise<any> {

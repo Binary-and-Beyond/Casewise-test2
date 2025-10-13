@@ -51,7 +51,13 @@ export default function AuthPage() {
           />
         )}
         {currentView === "signup" && (
-          <SignUpForm onLoginClick={() => setCurrentView("login")} />
+          <SignUpForm
+            onLoginClick={() => setCurrentView("login")}
+            onSignUpSuccess={() => {
+              // Signup success is handled by the auth context
+              // No need to manually change view
+            }}
+          />
         )}
       </div>
     </div>

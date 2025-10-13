@@ -79,7 +79,7 @@ export function ChatbotFlow({ document, onBack }: ChatbotFlowProps) {
       const response = await apiService.generateMCQs(
         document.id,
         selectedCase?.id,
-        3
+        5
       );
       setMCQQuestions(response.questions);
       setCurrentStep("mcq-questions");
@@ -96,12 +96,20 @@ export function ChatbotFlow({ document, onBack }: ChatbotFlowProps) {
     setIsLoading(true);
     setError("");
     try {
-      const response = await apiService.identifyConcepts(document.id, 3);
+      const response = await apiService.identifyConcepts(document.id, 5);
       setConcepts(response.concepts);
       setCurrentStep("concepts");
     } catch (error) {
+      console.error("Identify concepts error:", error);
+      console.error("Error details:", {
+        message: error instanceof Error ? error.message : "Unknown error",
+        stack: error instanceof Error ? error.stack : undefined,
+        documentId: document.id,
+      });
       setError(
-        error instanceof Error ? error.message : "Failed to identify concepts"
+        `Failed to identify concepts: ${
+          error instanceof Error ? error.message : "Unknown error"
+        }`
       );
     } finally {
       setIsLoading(false);

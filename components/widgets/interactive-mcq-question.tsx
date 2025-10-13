@@ -30,13 +30,34 @@ export function InteractiveMCQQuestion({
   const [selectedOption, setSelectedOption] = useState<string | null>(null);
   const [showExplanation, setShowExplanation] = useState(false);
   const [hasAnswered, setHasAnswered] = useState(false);
+  const [attempts, setAttempts] = useState(0);
+  const [showHint, setShowHint] = useState(false);
+  const [showAnswer, setShowAnswer] = useState(false);
+  const [previousAnswers, setPreviousAnswers] = useState<string[]>([]);
 
   const handleOptionSelect = (optionId: string) => {
-    if (hasAnswered) return; // Prevent changing answer after submission
+    if (hasAnswered && attempts >= 3) return; // Prevent changing answer after 3 attempts
 
     setSelectedOption(optionId);
-    setHasAnswered(true);
-    setShowExplanation(false);
+    setAttempts((prev) => prev + 1);
+    setPreviousAnswers((prev) => [...prev, optionId]);
+
+    const isCorrect = question.options.find(
+      (opt) => opt.id === optionId
+    )?.is_correct;
+
+    if (isCorrect) {
+      setHasAnswered(true);
+      setShowExplanation(false);
+    } else if (attempts + 1 >= 3) {
+      // After 3 attempts, automatically show the explanation
+      setHasAnswered(true);
+      setShowAnswer(true);
+      setShowExplanation(true); // Automatically show explanation
+    } else {
+      // Show hint after first attempt
+      setShowHint(true);
+    }
   };
 
   const handleExplain = () => {
@@ -47,19 +68,31 @@ export function InteractiveMCQQuestion({
     setSelectedOption(null);
     setHasAnswered(false);
     setShowExplanation(false);
+    setAttempts(0);
+    setShowHint(false);
+    setShowAnswer(false);
+    setPreviousAnswers([]);
   };
 
   const getOptionStyle = (option: MCQOption, optionIndex: number) => {
     const baseStyle = "p-3 rounded border cursor-pointer transition-colors";
 
-    if (!hasAnswered) {
-      // Before answering - show as selectable
-      return `${baseStyle} bg-white border-gray-200 hover:bg-gray-50 ${
-        selectedOption === option.id ? "bg-blue-50 border-blue-300" : ""
-      }`;
+    if (!hasAnswered || attempts < 3) {
+      // Before final answer or during attempts - show as selectable
+      const isPreviousAnswer = previousAnswers.includes(option.id);
+      const isCurrentSelection = selectedOption === option.id;
+
+      if (isPreviousAnswer && !option.is_correct) {
+        // Show previous wrong answers as disabled
+        return `${baseStyle} bg-red-50 border-red-200 text-red-600 cursor-not-allowed opacity-60`;
+      } else if (isCurrentSelection) {
+        return `${baseStyle} bg-blue-50 border-blue-300`;
+      } else {
+        return `${baseStyle} bg-white border-gray-200 hover:bg-gray-50`;
+      }
     }
 
-    // After answering - show correct/incorrect
+    // After 3 attempts or correct answer - show correct/incorrect
     if (option.is_correct) {
       return `${baseStyle} bg-green-50 border-green-200 text-green-800`;
     } else if (selectedOption === option.id && !option.is_correct) {
@@ -113,7 +146,16 @@ export function InteractiveMCQQuestion({
                 <div
                   key={option.id}
                   className={getOptionStyle(option, optionIndex)}
-                  onClick={() => handleOptionSelect(option.id)}
+                  onClick={() => {
+                    // Don't allow clicking on previously attempted wrong answers
+                    if (
+                      previousAnswers.includes(option.id) &&
+                      !option.is_correct
+                    ) {
+                      return;
+                    }
+                    handleOptionSelect(option.id);
+                  }}
                 >
                   <div className="flex items-center justify-between">
                     <div className="flex items-center">
@@ -139,8 +181,41 @@ export function InteractiveMCQQuestion({
               ))}
             </div>
 
+            {/* Attempt Counter */}
+            {attempts > 0 && (
+              <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center">
+                    <span className="text-blue-600 text-sm font-medium">
+                      Attempt {attempts} of 3
+                    </span>
+                    {attempts < 3 && !isCorrect && (
+                      <span className="ml-2 text-blue-600 text-sm">
+                        ({3 - attempts} attempts remaining)
+                      </span>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Hint Display */}
+            {showHint && attempts < 3 && !isCorrect && (
+              <div className="p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
+                <div className="flex items-center">
+                  <span className="text-yellow-600 text-lg mr-2">💡</span>
+                  <span className="font-medium text-yellow-800">
+                    Hint:{" "}
+                    {attempts === 1
+                      ? "Think about the key concepts in the question."
+                      : "Consider the most logical answer based on medical knowledge."}
+                  </span>
+                </div>
+              </div>
+            )}
+
             {/* Answer Feedback */}
-            {hasAnswered && (
+            {(hasAnswered || attempts >= 3) && (
               <div
                 className={`p-3 rounded-lg ${
                   isCorrect
@@ -154,7 +229,14 @@ export function InteractiveMCQQuestion({
                       <>
                         <span className="text-green-600 text-lg mr-2">✓</span>
                         <span className="font-medium text-green-800">
-                          Correct!
+                          Correct! Well done!
+                        </span>
+                      </>
+                    ) : attempts >= 3 ? (
+                      <>
+                        <span className="text-red-600 text-lg mr-2">✗</span>
+                        <span className="font-medium text-red-800">
+                          Incorrect after 3 attempts
                         </span>
                       </>
                     ) : (
@@ -168,12 +250,14 @@ export function InteractiveMCQQuestion({
                   </div>
 
                   <div className="flex space-x-2">
-                    <button
-                      onClick={handleExplain}
-                      className="text-sm bg-blue-600 hover:bg-blue-700 text-white px-3 py-1 rounded"
-                    >
-                      Explain
-                    </button>
+                    {attempts < 3 && (
+                      <button
+                        onClick={handleExplain}
+                        className="text-sm bg-blue-600 hover:bg-blue-700 text-white px-3 py-1 rounded"
+                      >
+                        Explain
+                      </button>
+                    )}
                     <button
                       onClick={handleReset}
                       className="text-sm bg-gray-600 hover:bg-gray-700 text-white px-3 py-1 rounded"
@@ -185,10 +269,14 @@ export function InteractiveMCQQuestion({
               </div>
             )}
 
+            {/* Correct Answer section removed - only explanation will be shown */}
+
             {/* Explanation */}
             {showExplanation && (
               <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg">
-                <h4 className="font-medium text-blue-900 mb-2">Explanation:</h4>
+                <h4 className="font-medium text-blue-900 mb-2">
+                  {attempts >= 3 ? "Answer Explanation:" : "Explanation:"}
+                </h4>
                 <p className="text-sm text-blue-800">{question.explanation}</p>
               </div>
             )}
@@ -210,10 +298,13 @@ export function InteractiveMCQQuestion({
                 </span>
               </div>
 
-              {!hasAnswered && (
+              {!hasAnswered && attempts < 3 && (
                 <p className="text-sm text-gray-500">
                   Select an answer to check your response
                 </p>
+              )}
+              {attempts >= 3 && !isCorrect && (
+                <p className="text-sm text-red-500">Maximum attempts reached</p>
               )}
             </div>
           </div>

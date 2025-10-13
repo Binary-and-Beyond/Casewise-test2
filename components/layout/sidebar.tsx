@@ -7,10 +7,13 @@ import Image from "next/image";
 interface Chat {
   id: string;
   name: string;
-  uploadedFile?: File | null;
-  messageCount?: number;
-  createdAt?: string;
-  updatedAt?: string;
+  document_id?: string;
+  document_filename?: string;
+  document_content_preview?: string;
+  message_count: number;
+  created_at: string;
+  updated_at: string;
+  user_id: string;
 }
 
 interface SidebarProps {
@@ -22,6 +25,7 @@ interface SidebarProps {
     | "generate-mcqs"
     | "explore-cases"
     | "identify-concepts"
+    | "concept-detail"
     | "profile-settings"
     | "notifications"
     | "chatbot-flow";
@@ -34,6 +38,7 @@ interface SidebarProps {
       | "generate-mcqs"
       | "explore-cases"
       | "identify-concepts"
+      | "concept-detail"
       | "profile-settings"
       | "notifications"
       | "chatbot-flow"
@@ -84,6 +89,23 @@ export function Sidebar({
   const { user } = useAuth();
   const [sidebarExpanded, setSidebarExpanded] = useState(true);
   const [showProfileDropdown, setShowProfileDropdown] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState<string | null>(
+    null
+  );
+
+  const handleDeleteClick = (chatId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setShowDeleteConfirm(chatId);
+  };
+
+  const confirmDelete = (chatId: string) => {
+    onDeleteChat(chatId);
+    setShowDeleteConfirm(null);
+  };
+
+  const cancelDelete = () => {
+    setShowDeleteConfirm(null);
+  };
 
   return (
     <div className="w-64 bg-white border-r border-gray-200 flex flex-col fixed left-0 top-0 z-10 h-screen">
@@ -143,7 +165,7 @@ export function Sidebar({
               chats.map((chat) => (
                 <div
                   key={chat.id}
-                  className={`group flex items-center p-2 rounded-lg cursor-pointer mb-1 ${
+                  className={`group flex items-center p-2 rounded-lg cursor-pointer mb-1 relative ${
                     activeChat === chat.id
                       ? "bg-blue-500 text-white"
                       : "text-gray-600 hover:bg-gray-100"
@@ -153,43 +175,38 @@ export function Sidebar({
                     onClick={() => handleChatSelect(chat.id)}
                     className="flex items-center flex-1 min-w-0"
                   >
-                    <div className="w-6 h-6 rounded bg-gray-300 mr-3 flex items-center justify-center flex-shrink-0">
-                      <svg
-                        className="w-3 h-3"
-                        fill="currentColor"
-                        viewBox="0 0 20 20"
-                      >
-                        <path
-                          fillRule="evenodd"
-                          d="M18 10c0 3.866-3.582 7-8 7a8.841 8.841 0 01-4.083-.98L2 17l1.338-3.123C2.493 12.767 2 11.434 2 10c0-3.866 3.582-7 8-7s8 3.134 8 7zM7 9H5v2h2V9zm8 0h-2v2h2V9zm-8 0h2v2H9V9z"
-                          clipRule="evenodd"
-                        />
-                      </svg>
-                    </div>
                     <div className="flex-1 min-w-0 overflow-hidden">
                       <div className="text-sm truncate" title={chat.name}>
                         {chat.name}
                       </div>
-                      {chat.messageCount && chat.messageCount > 0 && (
-                        <div className="text-xs opacity-75 truncate">
-                          {chat.messageCount} messages
-                        </div>
-                      )}
+                      {chat.message_count !== undefined &&
+                        chat.message_count > 0 && (
+                          <div className="text-xs opacity-75 truncate">
+                            {chat.message_count} message
+                            {chat.message_count !== 1 ? "s" : ""}
+                          </div>
+                        )}
                     </div>
-                    {chat.uploadedFile && (
-                      <div className="ml-2 w-2 h-2 bg-green-500 rounded-full flex-shrink-0"></div>
+                    {chat.document_filename && (
+                      <div
+                        className="ml-2 w-2 h-2 bg-green-500 rounded-full flex-shrink-0"
+                        title={`Document: ${chat.document_filename}`}
+                      ></div>
                     )}
                   </div>
+
+                  {/* Delete button - more visible */}
                   <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onDeleteChat(chat.id);
-                    }}
-                    className="opacity-0 group-hover:opacity-100 ml-1 p-1 hover:bg-red-100 rounded text-red-500 hover:text-red-700 flex-shrink-0"
+                    onClick={(e) => handleDeleteClick(chat.id, e)}
+                    className={`ml-2 p-1 rounded text-gray-400 hover:text-blue-500 hover:bg-blue-50 flex-shrink-0 transition-all duration-200 ${
+                      activeChat === chat.id
+                        ? "opacity-70 hover:opacity-100 hover:bg-blue-100"
+                        : "opacity-50 group-hover:opacity-100"
+                    }`}
                     title="Delete chat"
                   >
                     <svg
-                      className="w-3 h-3"
+                      className="w-4 h-4"
                       fill="currentColor"
                       viewBox="0 0 20 20"
                     >
@@ -200,6 +217,29 @@ export function Sidebar({
                       />
                     </svg>
                   </button>
+
+                  {/* Delete confirmation dialog */}
+                  {showDeleteConfirm === chat.id && (
+                    <div className="absolute top-0 left-0 right-0 bg-red-50 border border-red-200 rounded-lg p-3 z-50 shadow-lg">
+                      <div className="text-sm text-red-800 mb-2">
+                        Delete "{chat.name}"?
+                      </div>
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => confirmDelete(chat.id)}
+                          className="px-3 py-1 bg-red-600 text-white text-xs rounded hover:bg-red-700"
+                        >
+                          Delete
+                        </button>
+                        <button
+                          onClick={cancelDelete}
+                          className="px-3 py-1 bg-gray-300 text-gray-700 text-xs rounded hover:bg-gray-400"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
               ))
             )}

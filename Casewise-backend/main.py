@@ -7,6 +7,7 @@ from typing import Optional, List
 from contextlib import asynccontextmanager
 import hashlib
 import os
+import re
 from dotenv import load_dotenv
 import pymongo      
 from bson import ObjectId
@@ -21,6 +22,10 @@ import hashlib
 import json
 import re
 from typing import List, Dict, Optional
+from google.oauth2 import id_token
+from google.auth.transport import requests
+import time
+from collections import defaultdict, deque
 # Try to import PDF processing libraries
 PDF_AVAILABLE = False
 PDF_LIBRARY = None
@@ -219,6 +224,7 @@ MONGODB_URL = os.getenv("MONGODB_URL")
 DATABASE_NAME = os.getenv("DATABASE_NAME")
 SECRET_KEY = os.getenv("SECRET_KEY")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
 ALGORITHM = "HS256"
 
 # Configure Gemini AI
@@ -249,6 +255,12 @@ def connect_to_mongodb():
         db.chats.create_index("updated_at")
         db.chat_messages.create_index("chat_id")
         db.chat_messages.create_index("timestamp")
+        db.generated_cases.create_index("chat_id")
+        db.generated_cases.create_index("document_id")
+        db.generated_mcqs.create_index("chat_id")
+        db.generated_mcqs.create_index("document_id")
+        db.generated_concepts.create_index("chat_id")
+        db.generated_concepts.create_index("document_id")
         
     except Exception as e:
         print(f"Failed to connect to MongoDB: {e}")
@@ -286,6 +298,10 @@ class UserLogin(BaseModel):
     """Schema for user login"""
     email: EmailStr
     password: str
+
+class GoogleAuthRequest(BaseModel):
+    """Schema for Google OAuth authentication"""
+    id_token: str
 
 class Token(BaseModel):
     """Token response schema"""
@@ -394,6 +410,7 @@ class MCQRequest(BaseModel):
     """MCQ generation request schema"""
     document_id: Optional[str] = None
     case_id: Optional[str] = None
+    case_title: Optional[str] = None
     num_questions: int = Field(default=3, ge=1, le=10)
 
 class MCQOption(BaseModel):
@@ -477,6 +494,35 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
     is_valid = computed_hash == hashed_password
     print(f"VERIFY_PASSWORD: Password valid: {is_valid}")
     return is_valid
+
+def verify_google_token(id_token_str: str) -> dict:
+    """Verify Google ID token and return user info"""
+    try:
+        print(f"GOOGLE_AUTH: Verifying Google ID token")
+        
+        if not GOOGLE_CLIENT_ID:
+            raise HTTPException(status_code=500, detail="Google OAuth not configured")
+        
+        # Verify the token
+        idinfo = id_token.verify_oauth2_token(
+            id_token_str, 
+            requests.Request(), 
+            GOOGLE_CLIENT_ID
+        )
+        
+        # Verify the issuer
+        if idinfo['iss'] not in ['accounts.google.com', 'https://accounts.google.com']:
+            raise ValueError('Wrong issuer.')
+        
+        print(f"GOOGLE_AUTH: Token verified for user: {idinfo.get('email')}")
+        return idinfo
+        
+    except ValueError as e:
+        print(f"GOOGLE_AUTH: Invalid token: {e}")
+        raise HTTPException(status_code=401, detail="Invalid Google token")
+    except Exception as e:
+        print(f"GOOGLE_AUTH: Error verifying token: {e}")
+        raise HTTPException(status_code=401, detail="Failed to verify Google token")
 
 def create_notification(user_id: str, notification_type: str, title: str, message: str, metadata: dict = None):
     """Create a notification for a user"""
@@ -582,6 +628,34 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(securit
     user["id"] = str(user["_id"])
     print(f"SUCCESS AUTH: User authenticated: {user.get('email', 'No email')}")
     return user
+
+# Rate Limiter Class
+class RateLimiter:
+    def __init__(self, max_requests: int = 10, time_window: int = 1):
+        self.max_requests = max_requests
+        self.time_window = time_window
+        self.requests = defaultdict(deque)
+    
+    def is_allowed(self, client_ip: str) -> bool:
+        now = time.time()
+        client_requests = self.requests[client_ip]
+        
+        # Remove old requests outside the time window
+        while client_requests and client_requests[0] <= now - self.time_window:
+            client_requests.popleft()
+        
+        # Check if under the limit
+        if len(client_requests) < self.max_requests:
+            client_requests.append(now)
+            return True
+        
+        return False
+
+# Initialize rate limiter
+rate_limiter = RateLimiter(max_requests=10, time_window=1)  # 10 requests per second
+
+def get_rate_limiter():
+    return rate_limiter
 
 app = FastAPI(
     title="Medical AI - Auth API",
@@ -828,6 +902,77 @@ def login(user_credentials: UserLogin):
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Login error: {str(e)}")
 
+@app.post("/auth/google", response_model=Token)
+def google_auth(request: GoogleAuthRequest):
+    """Authenticate user with Google OAuth"""
+    print("GOOGLE_AUTH ENDPOINT CALLED")
+    
+    try:
+        # Verify the Google ID token
+        idinfo = verify_google_token(request.id_token)
+        
+        email = idinfo.get('email')
+        name = idinfo.get('name', '')
+        picture = idinfo.get('picture', '')
+        
+        if not email:
+            raise HTTPException(status_code=400, detail="Email not provided by Google")
+        
+        print(f"GOOGLE_AUTH: Processing user: {email}")
+        
+        # Check if user already exists
+        existing_user = db.users.find_one({"email": email})
+        
+        if existing_user:
+            print(f"GOOGLE_AUTH: Existing user found: {email}")
+            user = existing_user
+        else:
+            print(f"GOOGLE_AUTH: Creating new user: {email}")
+            # Create new user
+            username = email.split('@')[0]  # Use email prefix as username
+            
+            # Check if username is taken
+            counter = 1
+            original_username = username
+            while db.users.find_one({"username": username}):
+                username = f"{original_username}{counter}"
+                counter += 1
+            
+            user_doc = {
+                "email": email,
+                "username": username,
+                "full_name": name,
+                "first_name": name.split(' ')[0] if name else '',
+                "last_name": ' '.join(name.split(' ')[1:]) if name and len(name.split(' ')) > 1 else '',
+                "profile_image_url": picture,
+                "is_active": True,
+                "created_at": datetime.utcnow(),
+                "auth_provider": "google"
+            }
+            
+            result = db.users.insert_one(user_doc)
+            user = db.users.find_one({"_id": result.inserted_id})
+            print(f"GOOGLE_AUTH: New user created with ID: {result.inserted_id}")
+        
+        # Create access token
+        access_token = create_access_token(data={"sub": str(user["_id"])})
+        print("GOOGLE_AUTH: Login successful - token created")
+        
+        return {
+            "access_token": access_token,
+            "token_type": "bearer",
+            "user_id": str(user["_id"]),
+            "email": user["email"]
+        }
+        
+    except HTTPException as he:
+        print(f"GOOGLE_AUTH: HTTP Exception: {he.detail}")
+        raise
+    except Exception as e:
+        print(f"GOOGLE_AUTH: Unexpected error: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Google authentication error: {str(e)}")
 
 @app.get("/me", response_model=UserResponse)
 def get_current_user_info(current_user: dict = Depends(get_current_user)):
@@ -1824,8 +1969,12 @@ async def generate_mcqs(
         model = genai.GenerativeModel('models/gemini-2.5-flash')
         
         # Create the prompt for MCQ generation
+        case_context = ""
+        if request.case_title:
+            case_context = f"\n\nSpecific Case Focus: {request.case_title}\nGenerate MCQs specifically related to this case scenario."
+        
         system_prompt = f"""
-        You are an expert medical educator creating MCQ questions. Based on the following content, generate {request.num_questions} high-quality multiple-choice questions.
+        You are an expert medical educator creating MCQ questions. Based on the following content, generate {request.num_questions} high-quality multiple-choice questions.{case_context}
 
         Content:
         {document_context}
@@ -2016,9 +2165,19 @@ async def identify_concepts(
 @app.post("/ai/auto-generate", response_model=AutoGenerationResponse)
 async def auto_generate_content(
     request: AutoGenerationRequest,
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(get_current_user),
+    request_obj: Request = None
 ):
     """Automatically generate all content types from a document - optimized for speed"""
+    
+    # Rate limiting check
+    if request_obj:
+        client_ip = request_obj.client.host
+        if not rate_limiter.is_allowed(client_ip):
+            raise HTTPException(
+                status_code=429, 
+                detail="Rate limit exceeded. Please wait before making another request."
+            )
     
     if not GEMINI_API_KEY:
         raise HTTPException(status_code=500, detail="Gemini AI API key not configured")
@@ -2056,19 +2215,14 @@ async def auto_generate_content(
         if request.generate_cases:
             print(f" Generating {request.num_cases} cases...")
             try:
-                cases_prompt = f"""Generate {request.num_cases} medical cases from this document:
+                cases_prompt = f"""Generate {request.num_cases} medical cases from this content:
 
 {document['content'][:2000]}
 
-Return JSON array only:
-[
-    {{
-        "title": "Case Title",
-        "description": "Brief case description with patient presentation and key findings.",
-        "key_points": ["Key point 1", "Key point 2", "Key point 3"],
-        "difficulty": "Moderate"
-    }}
-]"""
+Return JSON array:
+[{{"title": "Case Title", "description": "Brief case description", "key_points": ["point1", "point2", "point3"], "difficulty": "Easy|Moderate|Hard"}}]
+
+Generate exactly {request.num_cases} unique cases."""
                 
                 cases_response = model.generate_content(cases_prompt)
                 import json
@@ -2095,8 +2249,13 @@ Return JSON array only:
                         # Ensure we have the right number of cases
                         if len(cases_data) < request.num_cases:
                             print(f"Warning: Only got {len(cases_data)} cases, expected {request.num_cases}")
+                            # If we got fewer cases than requested, try to generate more
+                            if len(cases_data) == 0:
+                                raise ValueError("No cases generated")
                         
-                        response_data["cases"] = [CaseScenario(**case) for case in cases_data[:request.num_cases]]
+                        # Take the requested number of cases, or all available if fewer
+                        cases_to_use = cases_data[:request.num_cases]
+                        response_data["cases"] = [CaseScenario(**case) for case in cases_to_use]
                         print(f" Generated {len(response_data['cases'])} cases successfully")
                     else:
                         raise ValueError("No valid JSON array found in response")
@@ -2136,26 +2295,14 @@ Return JSON array only:
         if request.generate_mcqs:
             print(f" Generating {request.num_mcqs} MCQs...")
             try:
-                mcq_prompt = f"""Generate {request.num_mcqs} MCQ questions from this document:
+                mcq_prompt = f"""Generate {request.num_mcqs} MCQ questions from this content:
 
 {document['content'][:2000]}
 
-Return JSON array only:
-[
-    {{
-        "id": "mcq_1",
-        "question": "Question based on document content?",
-        "options": [
-            {{"id": "A", "text": "Option A", "is_correct": false}},
-            {{"id": "B", "text": "Option B", "is_correct": true}},
-            {{"id": "C", "text": "Option C", "is_correct": false}},
-            {{"id": "D", "text": "Option D", "is_correct": false}},
-            {{"id": "E", "text": "Option E", "is_correct": false}}
-        ],
-        "explanation": "Brief explanation of the correct answer.",
-        "difficulty": "Moderate"
-    }}
-]"""
+Return JSON array:
+[{{"id": "mcq_1", "question": "Medical question?", "options": [{{"id": "A", "text": "Option A", "is_correct": false}}, {{"id": "B", "text": "Correct answer", "is_correct": true}}, {{"id": "C", "text": "Option C", "is_correct": false}}, {{"id": "D", "text": "Option D", "is_correct": false}}], "explanation": "Brief explanation", "difficulty": "Easy|Moderate|Hard"}}]
+
+Generate exactly {request.num_mcqs} questions."""
                 
                 mcq_response = model.generate_content(mcq_prompt)
                 print(f"Raw MCQ response: {mcq_response.text[:500]}...")
@@ -2181,9 +2328,14 @@ Return JSON array only:
                         # Ensure we have the right number of MCQs
                         if len(mcq_data) < request.num_mcqs:
                             print(f"Warning: Only got {len(mcq_data)} MCQs, expected {request.num_mcqs}")
+                            # If we got fewer MCQs than requested, try to generate more
+                            if len(mcq_data) == 0:
+                                raise ValueError("No MCQs generated")
                         
+                        # Take the requested number of MCQs, or all available if fewer
+                        mcqs_to_use = mcq_data[:request.num_mcqs]
                         questions = []
-                        for mcq in mcq_data[:request.num_mcqs]:
+                        for mcq in mcqs_to_use:
                             options = [MCQOption(**option) for option in mcq["options"]]
                             question = MCQQuestion(
                                 id=mcq["id"],
@@ -2261,19 +2413,14 @@ Return JSON array only:
         if request.generate_concepts:
             print(f" Generating {request.num_concepts} concepts...")
             try:
-                concepts_prompt = f"""Identify {request.num_concepts} key medical concepts from this document:
+                concepts_prompt = f"""Identify {request.num_concepts} key medical concepts from this content:
 
 {document['content'][:2000]}
 
-Return JSON array only:
-[
-    {{
-        "id": "concept_1",
-        "title": "Concept Title",
-        "description": "Brief description of the concept and its importance.",
-        "importance": "High"
-    }}
-]"""
+Return JSON array:
+[{{"id": "concept_1", "title": "Medical Concept", "description": "Brief concept description", "importance": "High|Medium|Low"}}]
+
+Identify exactly {request.num_concepts} concepts."""
                 
                 concepts_response = model.generate_content(concepts_prompt)
                 print(f"Raw concepts response: {concepts_response.text[:500]}...")
@@ -2299,8 +2446,13 @@ Return JSON array only:
                         # Ensure we have the right number of concepts
                         if len(concepts_data) < request.num_concepts:
                             print(f"Warning: Only got {len(concepts_data)} concepts, expected {request.num_concepts}")
+                            # If we got fewer concepts than requested, try to generate more
+                            if len(concepts_data) == 0:
+                                raise ValueError("No concepts generated")
                         
-                        response_data["concepts"] = [Concept(**concept) for concept in concepts_data[:request.num_concepts]]
+                        # Take the requested number of concepts, or all available if fewer
+                        concepts_to_use = concepts_data[:request.num_concepts]
+                        response_data["concepts"] = [Concept(**concept) for concept in concepts_to_use]
                         print(f" Generated {len(response_data['concepts'])} concepts successfully")
                     else:
                         raise ValueError("No valid JSON array found in response")
@@ -2578,11 +2730,21 @@ class ChatSession(BaseModel):
     user_id: str
     document_id: Optional[str] = None
     message_count: int = 0
+    document_filename: Optional[str] = None
+    document_content_preview: Optional[str] = None
+    # Context fields for case/concept specific chats
+    case_title: Optional[str] = None
+    concept_title: Optional[str] = None
+    parent_chat_id: Optional[str] = None  # Reference to main chat
 
 class CreateChatRequest(BaseModel):
     """Create chat request schema"""
     name: Optional[str] = None
     document_id: Optional[str] = None
+    # Context fields for case/concept specific chats
+    case_title: Optional[str] = None
+    concept_title: Optional[str] = None
+    parent_chat_id: Optional[str] = None
 
 class ChatMessage(BaseModel):
     """Chat message schema"""
@@ -2592,6 +2754,40 @@ class ChatMessage(BaseModel):
     response: str
     timestamp: datetime
     document_id: Optional[str] = None
+
+class GeneratedCase(BaseModel):
+    """Generated case schema for storage"""
+    id: str
+    chat_id: str
+    document_id: str
+    title: str
+    description: str
+    key_points: List[str]
+    difficulty: str
+    created_at: datetime
+
+class GeneratedMCQ(BaseModel):
+    """Generated MCQ schema for storage"""
+    id: str
+    chat_id: str
+    document_id: str
+    case_title: Optional[str] = None
+    question: str
+    options: List[MCQOption]
+    explanation: str
+    difficulty: str
+    created_at: datetime
+
+class GeneratedConcept(BaseModel):
+    """Generated concept schema for storage"""
+    id: str
+    chat_id: str
+    document_id: str
+    case_title: Optional[str] = None
+    title: str
+    description: str
+    importance: str
+    created_at: datetime
 
 @app.post("/ai/chat", response_model=ChatResponse)
 async def chat_with_ai(
@@ -2696,7 +2892,7 @@ async def chat_with_ai(
         print("SUCCESS: Response generated successfully")
         return ChatResponse(
             response=response.text,
-            timestamp=datetime.utcnow()
+            timestamp=datetime.now()
         )
         
     except Exception as e:
@@ -2745,14 +2941,37 @@ async def create_chat(
         chat_name = request.name or generate_chat_name(request.document_id)
         print(f"Generated chat name: {chat_name}")
         
+        # Get document information if document_id is provided
+        document_filename = None
+        document_content_preview = None
+        
+        if request.document_id:
+            try:
+                document = db.documents.find_one({
+                    "_id": ObjectId(request.document_id),
+                    "uploaded_by": current_user["id"]
+                })
+                if document:
+                    document_filename = document.get("filename", "Unknown Document")
+                    # Store first 200 characters as preview
+                    document_content_preview = document.get("content", "")[:200] + "..." if len(document.get("content", "")) > 200 else document.get("content", "")
+            except Exception as e:
+                print(f"Error fetching document info: {e}")
+        
         # Create chat session
         chat_doc = {
             "name": chat_name,
             "user_id": current_user["id"],
             "document_id": request.document_id,
+            "document_filename": document_filename,
+            "document_content_preview": document_content_preview,
             "message_count": 0,
             "created_at": datetime.utcnow(),
-            "updated_at": datetime.utcnow()
+            "updated_at": datetime.utcnow(),
+            # Context fields
+            "case_title": request.case_title,
+            "concept_title": request.concept_title,
+            "parent_chat_id": request.parent_chat_id
         }
         
         print(f"Chat document to insert: {chat_doc}")
@@ -2776,14 +2995,21 @@ async def create_chat(
 async def get_user_chats(current_user: dict = Depends(get_current_user)):
     """Get all chat sessions for the current user"""
     
+    print(f"🔍 GET_CHATS: User ID: {current_user.get('id', 'No ID')}")
+    print(f"🔍 GET_CHATS: User email: {current_user.get('email', 'No email')}")
+    
     chats = list(db.chats.find(
         {"user_id": current_user["id"]}
     ).sort("updated_at", -1))
     
+    print(f"🔍 GET_CHATS: Found {len(chats)} chats in database")
+    
     for chat in chats:
         chat["id"] = str(chat["_id"])
         del chat["_id"]
+        print(f"🔍 GET_CHATS: Chat {chat['id']} - {chat.get('name', 'No name')}")
     
+    print(f"🔍 GET_CHATS: Returning {len(chats)} chats")
     return chats
 
 @app.get("/chats/{chat_id}", response_model=ChatSession)
@@ -2828,19 +3054,35 @@ async def delete_chat(
     if not chat:
         raise HTTPException(status_code=404, detail="Chat not found")
     
-    # Delete chat and all its messages
+    # Delete chat and all its associated data
     db.chats.delete_one({"_id": ObjectId(chat_id)})
     db.chat_messages.delete_many({"chat_id": chat_id})
     
+    # Delete all generated content for this chat
+    db.generated_cases.delete_many({"chat_id": chat_id})
+    db.generated_mcqs.delete_many({"chat_id": chat_id})
+    db.generated_concepts.delete_many({"chat_id": chat_id})
+    
+    print(f"✅ Deleted chat {chat_id} and all associated content")
     return {"message": "Chat deleted successfully"}
 
 @app.post("/chats/{chat_id}/messages", response_model=ChatMessage, status_code=status.HTTP_201_CREATED)
 async def send_chat_message(
     chat_id: str,
     request: ChatRequest,
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(get_current_user),
+    request_obj: Request = None
 ):
     """Send a message in a specific chat session"""
+    
+    # Rate limiting check
+    if request_obj:
+        client_ip = request_obj.client.host
+        if not rate_limiter.is_allowed(client_ip):
+            raise HTTPException(
+                status_code=429, 
+                detail="Rate limit exceeded. Please wait before making another request."
+            )
     
     # Verify chat belongs to user
     try:
@@ -2950,7 +3192,7 @@ async def send_chat_message(
         "message": request.message,
         "response": ai_response,
         "document_id": document_id,
-        "timestamp": datetime.utcnow()
+        "timestamp": datetime.now()
     }
     
     result = db.chat_messages.insert_one(message_doc)
@@ -2968,6 +3210,65 @@ async def send_chat_message(
     del message_doc["_id"]
     
     return message_doc
+
+@app.put("/chats/{chat_id}/document", response_model=ChatSession)
+async def update_chat_document(
+    chat_id: str,
+    document_id: str,
+    current_user: dict = Depends(get_current_user)
+):
+    """Update a chat with document information"""
+    
+    try:
+        # Verify chat belongs to user
+        chat = db.chats.find_one({
+            "_id": ObjectId(chat_id),
+            "user_id": current_user["id"]
+        })
+        
+        if not chat:
+            raise HTTPException(status_code=404, detail="Chat not found")
+        
+        # Get document information
+        document = db.documents.find_one({
+            "_id": ObjectId(document_id),
+            "uploaded_by": current_user["id"]
+        })
+        
+        if not document:
+            raise HTTPException(status_code=404, detail="Document not found")
+        
+        # Update chat with document information
+        document_filename = document.get("filename", "Unknown Document")
+        chat_name = re.sub(r'\.[^/.]+$', '', document_filename) if document_filename else "Chat"
+        
+        update_data = {
+            "document_id": document_id,
+            "document_filename": document_filename,
+            "document_content_preview": document.get("content", "")[:200] + "..." if len(document.get("content", "")) > 200 else document.get("content", ""),
+            "name": chat_name,  # Update chat name to match document filename
+            "updated_at": datetime.utcnow()
+        }
+        
+        result = db.chats.update_one(
+            {"_id": ObjectId(chat_id)},
+            {"$set": update_data}
+        )
+        
+        if result.modified_count == 0:
+            raise HTTPException(status_code=400, detail="Failed to update chat")
+        
+        # Return updated chat
+        updated_chat = db.chats.find_one({"_id": ObjectId(chat_id)})
+        updated_chat["id"] = str(updated_chat["_id"])
+        del updated_chat["_id"]
+        
+        print(f"✅ Chat {chat_id} updated with document {document_id}")
+        return updated_chat
+        
+    except Exception as e:
+        print(f"❌ Error updating chat with document: {e}")
+        raise HTTPException(status_code=500, detail=f"Error updating chat: {str(e)}")
 
 @app.get("/chats/{chat_id}/messages", response_model=List[ChatMessage])
 async def get_chat_messages(
@@ -2998,6 +3299,210 @@ async def get_chat_messages(
     
     return messages
 
+@app.post("/chats/{chat_id}/content/save")
+async def save_generated_content(
+    chat_id: str,
+    content: dict,
+    current_user: dict = Depends(get_current_user)
+):
+    """Save generated content (cases, MCQs, concepts) for a chat"""
+    
+    try:
+        # Verify chat belongs to user
+        chat = db.chats.find_one({
+            "_id": ObjectId(chat_id),
+            "user_id": current_user["id"]
+        })
+        
+        if not chat:
+            raise HTTPException(status_code=404, detail="Chat not found")
+        
+        document_id = chat.get("document_id")
+        if not document_id:
+            raise HTTPException(status_code=400, detail="No document associated with this chat")
+        
+        # Save cases
+        if content.get("cases"):
+            for case in content["cases"]:
+                case_doc = {
+                    "chat_id": chat_id,
+                    "document_id": document_id,
+                    "title": case["title"],
+                    "description": case["description"],
+                    "key_points": case["key_points"],
+                    "difficulty": case["difficulty"],
+                    "created_at": datetime.utcnow()
+                }
+                db.generated_cases.insert_one(case_doc)
+        
+        # Save MCQs
+        if content.get("mcqs"):
+            for mcq in content["mcqs"]:
+                mcq_doc = {
+                    "chat_id": chat_id,
+                    "document_id": document_id,
+                    "case_title": content.get("case_title"),
+                    "question": mcq["question"],
+                    "options": mcq["options"],
+                    "explanation": mcq["explanation"],
+                    "difficulty": mcq["difficulty"],
+                    "created_at": datetime.utcnow()
+                }
+                db.generated_mcqs.insert_one(mcq_doc)
+        
+        # Save concepts
+        if content.get("concepts"):
+            for concept in content["concepts"]:
+                concept_doc = {
+                    "chat_id": chat_id,
+                    "document_id": document_id,
+                    "case_title": content.get("case_title"),
+                    "title": concept["title"],
+                    "description": concept["description"],
+                    "importance": concept["importance"],
+                    "created_at": datetime.utcnow()
+                }
+                db.generated_concepts.insert_one(concept_doc)
+        
+        print(f"✅ Saved generated content for chat {chat_id}")
+        return {"message": "Content saved successfully"}
+        
+    except Exception as e:
+        print(f"❌ Error saving generated content: {e}")
+        raise HTTPException(status_code=500, detail=f"Error saving content: {str(e)}")
+
+@app.get("/chats/{chat_id}/content")
+async def get_generated_content(
+    chat_id: str,
+    current_user: dict = Depends(get_current_user)
+):
+    """Get all generated content for a chat"""
+    
+    try:
+        # Verify chat belongs to user
+        chat = db.chats.find_one({
+            "_id": ObjectId(chat_id),
+            "user_id": current_user["id"]
+        })
+        
+        if not chat:
+            raise HTTPException(status_code=404, detail="Chat not found")
+        
+        # Get cases
+        cases = list(db.generated_cases.find({"chat_id": chat_id}))
+        for case in cases:
+            case["id"] = str(case["_id"])
+            del case["_id"]
+        
+        # Get MCQs
+        mcqs = list(db.generated_mcqs.find({"chat_id": chat_id}))
+        for mcq in mcqs:
+            mcq["id"] = str(mcq["_id"])
+            del mcq["_id"]
+        
+        # Get concepts
+        concepts = list(db.generated_concepts.find({"chat_id": chat_id}))
+        for concept in concepts:
+            concept["id"] = str(concept["_id"])
+            del concept["_id"]
+        
+        print(f"✅ Retrieved content for chat {chat_id}: {len(cases)} cases, {len(mcqs)} MCQs, {len(concepts)} concepts")
+        
+        return {
+            "cases": cases,
+            "mcqs": mcqs,
+            "concepts": concepts
+        }
+        
+    except Exception as e:
+        print(f"❌ Error retrieving generated content: {e}")
+        raise HTTPException(status_code=500, detail=f"Error retrieving content: {str(e)}")
+
+@app.post("/chats/context", response_model=ChatSession, status_code=status.HTTP_201_CREATED)
+async def get_or_create_context_chat(
+    request: CreateChatRequest,
+    current_user: dict = Depends(get_current_user)
+):
+    """Get or create a context-specific chat (case/concept)"""
+    
+    try:
+        print(f"CONTEXT CHAT: Request: {request}")
+        print(f"CONTEXT CHAT: User: {current_user.get('id')}")
+        
+        # Look for existing context chat
+        query = {
+            "user_id": current_user["id"],
+            "document_id": request.document_id
+        }
+        
+        if request.case_title:
+            query["case_title"] = request.case_title
+        if request.concept_title:
+            query["concept_title"] = request.concept_title
+        if request.parent_chat_id:
+            query["parent_chat_id"] = request.parent_chat_id
+        
+        existing_chat = db.chats.find_one(query)
+        
+        if existing_chat:
+            print(f"CONTEXT CHAT: Found existing chat: {existing_chat['_id']}")
+            existing_chat["id"] = str(existing_chat["_id"])
+            del existing_chat["_id"]
+            return existing_chat
+        
+        # Create new context chat
+        print(f"CONTEXT CHAT: Creating new context chat")
+        
+        # Generate context-specific name
+        context_name = ""
+        if request.concept_title:
+            context_name = f"Concept: {request.concept_title}"
+        elif request.case_title:
+            context_name = f"Case: {request.case_title}"
+        else:
+            context_name = f"Chat {datetime.now().strftime('%m/%d %H:%M')}"
+        
+        # Get document info if available
+        document_filename = None
+        document_content_preview = None
+        if request.document_id:
+            try:
+                document = db.documents.find_one({
+                    "_id": ObjectId(request.document_id),
+                    "uploaded_by": current_user["id"]
+                })
+                if document:
+                    document_filename = document.get("filename", "Unknown Document")
+                    document_content_preview = document.get("content", "")[:200] + "..." if len(document.get("content", "")) > 200 else document.get("content", "")
+            except Exception as e:
+                print(f"Error fetching document info: {e}")
+        
+        # Create context chat
+        chat_doc = {
+            "name": context_name,
+            "user_id": current_user["id"],
+            "document_id": request.document_id,
+            "document_filename": document_filename,
+            "document_content_preview": document_content_preview,
+            "message_count": 0,
+            "created_at": datetime.utcnow(),
+            "updated_at": datetime.utcnow(),
+            "case_title": request.case_title,
+            "concept_title": request.concept_title,
+            "parent_chat_id": request.parent_chat_id
+        }
+        
+        result = db.chats.insert_one(chat_doc)
+        chat_doc["id"] = str(result.inserted_id)
+        del chat_doc["_id"]
+        
+        print(f"CONTEXT CHAT: Created new chat: {chat_doc['id']}")
+        return chat_doc
+        
+    except Exception as e:
+        print(f"❌ Error creating context chat: {e}")
+        raise HTTPException(status_code=500, detail=f"Error creating context chat: {str(e)}")
+
 
 @app.get("/")
 def root():
@@ -3018,6 +3523,7 @@ def root():
         "endpoints": [
             "/signup", 
             "/login", 
+            "/auth/google",
             "/me",
             "/documents/upload",
             "/ai/auto-generate",

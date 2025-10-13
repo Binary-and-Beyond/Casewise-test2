@@ -1,23 +1,49 @@
-// Configuration for the application
-export const config = {
-  // Backend API URL - update this to match your backend server
-  API_BASE_URL: "http://localhost:8000",
-
-  // File upload settings
-  MAX_FILE_SIZE: 10 * 1024 * 1024, // 10MB
-  ALLOWED_FILE_TYPES: [
-    "text/plain",
-    "application/pdf",
-    "application/msword",
-    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-    "text/markdown",
-  ],
-
-  // Chat settings
-  MAX_CHAT_MESSAGES: 100,
-  CHAT_DEBOUNCE_MS: 300,
+// Configuration file for environment variables
+const getGoogleClientId = () => {
+  // Try multiple ways to get the client ID
+  if (typeof window !== "undefined") {
+    // Client-side: try to get from window object or process.env
+    return (
+      (window as any).NEXT_PUBLIC_GOOGLE_CLIENT_ID ||
+      process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID ||
+      "667668054845-4e63o2dlu50jlttnetusiukphseo33ck.apps.googleusercontent.com"
+    );
+  } else {
+    // Server-side: use process.env
+    return (
+      process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID ||
+      "667668054845-4e63o2dlu50jlttnetusiukphseo33ck.apps.googleusercontent.com"
+    );
+  }
 };
 
-// Environment check
-export const isDevelopment = process.env.NODE_ENV === "development";
-export const isProduction = process.env.NODE_ENV === "production";
+export const config = {
+  get googleClientId() {
+    return getGoogleClientId();
+  },
+  get API_BASE_URL() {
+    return process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000";
+  },
+};
+
+// Debug function to check environment variables
+export const debugEnv = () => {
+  console.log("🔍 Config Google Client ID:", config.googleClientId);
+  console.log("🔍 Config API Base URL:", config.API_BASE_URL);
+  console.log(
+    "🔍 Process env Google Client ID:",
+    process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID
+  );
+  console.log(
+    "🔍 Process env API Base URL:",
+    process.env.NEXT_PUBLIC_API_BASE_URL
+  );
+  console.log(
+    "🔍 All NEXT_PUBLIC env vars:",
+    Object.keys(process.env).filter((key) => key.startsWith("NEXT_PUBLIC_"))
+  );
+  console.log(
+    "🔍 Window object check:",
+    typeof window !== "undefined" ? "Client-side" : "Server-side"
+  );
+};

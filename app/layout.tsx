@@ -18,6 +18,28 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
+      <head>
+        <script
+          src="https://accounts.google.com/gsi/client"
+          async
+          defer
+          onLoad="console.log('Google Identity Services loaded')"
+          onError="console.error('Failed to load Google Identity Services')"
+        ></script>
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `
+              window.addEventListener('load', function() {
+                if (typeof google === 'undefined') {
+                  console.warn('Google Identity Services not loaded after page load');
+                } else {
+                  console.log('Google Identity Services available');
+                }
+              });
+            `,
+          }}
+        />
+      </head>
       <body className={`font-sans ${GeistSans.variable} ${GeistMono.variable}`}>
         <AuthProvider>{children}</AuthProvider>
         <Analytics />

@@ -4,6 +4,12 @@ import { useState, useRef, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { apiService, ChatMessage } from "@/lib/api";
+import { useAuth } from "@/lib/auth-context";
+import {
+  createTimestamp,
+  formatTime,
+  isValidTimestamp,
+} from "@/lib/timestamp-utils";
 import Image from "next/image";
 
 interface LocalChatMessage {
@@ -28,13 +34,89 @@ export function AIChat({
   messages: propMessages,
   onMessageSent,
 }: AIChatProps) {
+  const { user } = useAuth();
   const [localMessages, setLocalMessages] = useState<LocalChatMessage[]>([]);
   const [inputMessage, setInputMessage] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState("");
   const [showScrollToTop, setShowScrollToTop] = useState(false);
+  const [userJustSentMessage, setUserJustSentMessage] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
+
+  // Extract the main chat ID from context-specific chat ID
+  const getMainChatId = (contextChatId?: string): string => {
+    if (!contextChatId) return "";
+
+    // If it's a context-specific ID (contains -case- or -concept-), extract the main ID
+    if (
+      contextChatId.includes("-case-") ||
+      contextChatId.includes("-concept-")
+    ) {
+      const parts = contextChatId.split("-");
+      return parts[0]; // Return the main chat ID (first part)
+    }
+
+    // If it's a regular chat ID, return as is
+    return contextChatId;
+  };
+
+  const mainChatId = getMainChatId(chatId);
+
+  // Utility to strip context prefix for display
+  const stripContextPrefix = (message: string): string => {
+    const contextRegex = /^\[Context:.*?\]\s*/;
+    return message.replace(contextRegex, "").trim();
+  };
+
+  // Get context-specific storage key
+  const getContextStorageKey = (): string => {
+    if (!chatId) return "";
+    const key = `chat_messages_${chatId}`;
+    console.log(`🔑 Generated storage key: ${key}`);
+    return key;
+  };
+
+  // Load context-specific messages from localStorage
+  const loadContextMessages = (): LocalChatMessage[] => {
+    if (typeof window === "undefined") return [];
+
+    try {
+      const storageKey = getContextStorageKey();
+      console.log(`🔍 Loading messages for key: ${storageKey}`);
+      const stored = localStorage.getItem(storageKey);
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        console.log(`✅ Found ${parsed.length} stored messages for ${chatId}`);
+        // Convert timestamp strings back to Date objects
+        return parsed.map((msg: any) => ({
+          ...msg,
+          timestamp: new Date(msg.timestamp),
+        }));
+      } else {
+        console.log(`❌ No stored messages found for ${chatId}`);
+      }
+    } catch (error) {
+      console.error("Error loading context messages:", error);
+    }
+    return [];
+  };
+
+  // Save context-specific messages to localStorage
+  const saveContextMessages = (messages: LocalChatMessage[]) => {
+    if (typeof window === "undefined") return;
+
+    try {
+      const storageKey = getContextStorageKey();
+      console.log(
+        `💾 Saving ${messages.length} messages to key: ${storageKey}`
+      );
+      localStorage.setItem(storageKey, JSON.stringify(messages));
+      console.log(`✅ Successfully saved messages for ${chatId}`);
+    } catch (error) {
+      console.error("Error saving context messages:", error);
+    }
+  };
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -57,39 +139,75 @@ export function AIChat({
     }
   };
 
+  // Only scroll to bottom when user sends a message, not when AI responds
   useEffect(() => {
-    scrollToBottom();
-  }, [localMessages, propMessages]);
-
-  // Initialize messages only once when component mounts
-  useEffect(() => {
-    if (localMessages.length === 0) {
-      const welcomeMessage: LocalChatMessage = {
-        id: "welcome",
-        type: "ai",
-        message: `Hello! I'm your AI assistant for ${
-          caseTitle || "this case"
-        }. I can help you explore the case, answer questions, and provide insights. What would you like to know?`,
-        timestamp: new Date(),
-      };
-
-      const initialMessages = [welcomeMessage];
-
-      // Add existing messages from props if they exist
-      if (propMessages && propMessages.length > 0) {
-        propMessages.forEach((msg) => {
-          initialMessages.push({
-            id: msg.id,
-            type: "ai",
-            message: msg.response,
-            timestamp: new Date(msg.timestamp),
-          });
-        });
-      }
-
-      setLocalMessages(initialMessages);
+    if (userJustSentMessage) {
+      scrollToBottom();
+      setUserJustSentMessage(false); // Reset the flag
     }
-  }, [caseTitle]); // Only depend on caseTitle, not propMessages
+  }, [localMessages, userJustSentMessage]);
+
+  // Initialize messages when component mounts or when propMessages change
+  useEffect(() => {
+    console.log(`🔄 AIChat useEffect triggered for chatId: ${chatId}`);
+    console.log(`🔄 Main chat ID: ${mainChatId}`);
+    console.log(`🔄 Case title: ${caseTitle}`);
+
+    // First, try to load context-specific messages from localStorage
+    if (typeof window !== "undefined") {
+      const contextMessages = loadContextMessages();
+      if (contextMessages.length > 0) {
+        console.log(
+          `🔄 Loaded ${contextMessages.length} context messages for ${chatId}`
+        );
+        setLocalMessages(contextMessages);
+        return;
+      }
+    }
+
+    // If no context messages, create initial messages
+    const welcomeMessage: LocalChatMessage = {
+      id: "welcome",
+      type: "ai",
+      message: `Hello! I'm your AI assistant for ${
+        caseTitle || "this case"
+      }. I can help you explore the case, answer questions, and provide insights. What would you like to know?`,
+      timestamp: createTimestamp(),
+    };
+
+    const initialMessages = [welcomeMessage];
+
+    // Only add propMessages if we don't have context-specific messages
+    // This prevents propMessages from overriding context-specific conversations
+    if (
+      propMessages &&
+      propMessages.length > 0 &&
+      initialMessages.length === 1
+    ) {
+      // Only add propMessages if we only have the welcome message (no context messages)
+      propMessages.forEach((msg) => {
+        // Add user message (strip context prefix for display)
+        initialMessages.push({
+          id: `${msg.id}-user`,
+          type: "user",
+          message: stripContextPrefix(msg.message),
+          timestamp: new Date(msg.timestamp),
+        });
+        // Add AI response
+        initialMessages.push({
+          id: msg.id,
+          type: "ai",
+          message: msg.response,
+          timestamp: new Date(msg.timestamp),
+        });
+      });
+    }
+
+    console.log(
+      `🔄 Initialized with ${initialMessages.length} messages for ${chatId}`
+    );
+    setLocalMessages(initialMessages);
+  }, [chatId, caseTitle, propMessages]); // Depend on chatId, caseTitle and propMessages
 
   const handleSendMessage = async () => {
     if (!inputMessage.trim() || isLoading || !chatId) {
@@ -104,14 +222,17 @@ export function AIChat({
     const userMessage: LocalChatMessage = {
       id: Date.now().toString(),
       type: "user",
-      message: inputMessage.trim(),
-      timestamp: new Date(),
+      message: inputMessage.trim(), // Keep original message for display
+      timestamp: createTimestamp(),
     };
 
-    setLocalMessages((prev) => [...prev, userMessage]);
+    const updatedMessages = [...localMessages, userMessage];
+    setLocalMessages(updatedMessages);
+    saveContextMessages(updatedMessages); // Save to localStorage
     setInputMessage("");
     setIsLoading(true);
     setError("");
+    setUserJustSentMessage(true); // Set flag to scroll to bottom
 
     try {
       console.log("Sending message to chat:", {
@@ -120,9 +241,14 @@ export function AIChat({
         documentId,
       });
       // Use the new chat session API
+      // If we have a case title, prepend it to the message for context
+      const messageWithContext = caseTitle
+        ? `[Context: ${caseTitle}] ${inputMessage.trim()}`
+        : inputMessage.trim();
+
       const apiResponse = await apiService.sendChatMessageToSession(
-        chatId,
-        inputMessage.trim(),
+        mainChatId,
+        messageWithContext,
         documentId
       );
       console.log("API response:", apiResponse);
@@ -131,7 +257,9 @@ export function AIChat({
         id: apiResponse.id,
         type: "ai",
         message: apiResponse.response,
-        timestamp: new Date(apiResponse.timestamp),
+        timestamp: isValidTimestamp(apiResponse.timestamp)
+          ? new Date(apiResponse.timestamp)
+          : createTimestamp(),
       };
 
       setLocalMessages((prev) => {
@@ -140,7 +268,9 @@ export function AIChat({
         if (messageExists) {
           return prev;
         }
-        return [...prev, aiMessage];
+        const finalMessages = [...prev, aiMessage];
+        saveContextMessages(finalMessages); // Save to localStorage
+        return finalMessages;
       });
 
       // Notify parent component about the new message
@@ -163,9 +293,7 @@ export function AIChat({
     }
   };
 
-  const formatTime = (date: Date) => {
-    return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-  };
+  // Use the utility function for consistent time formatting
 
   return (
     <div className="flex flex-col h-full relative">
@@ -188,17 +316,35 @@ export function AIChat({
               } items-start gap-3 max-w-[80%]`}
             >
               {/* Profile Picture */}
-              <Image
-                src={
-                  message.type === "user"
-                    ? "/placeholder-user.jpg"
-                    : "/casewise_Icon.svg"
-                }
-                alt={message.type === "user" ? "User" : "AI"}
-                width={32}
-                height={32}
-                className="w-8 h-8 rounded-full object-cover"
-              />
+              <div className="w-8 h-8 rounded-full overflow-hidden flex-shrink-0">
+                {message.type === "user" ? (
+                  user?.profile_image_url ? (
+                    <Image
+                      src={user.profile_image_url}
+                      alt="User"
+                      width={32}
+                      height={32}
+                      className="w-full h-full object-cover"
+                    />
+                  ) : (
+                    <div className="w-full h-full bg-blue-500 flex items-center justify-center">
+                      <span className="text-white text-sm font-medium">
+                        {user?.full_name?.charAt(0) ||
+                          user?.username?.charAt(0) ||
+                          "U"}
+                      </span>
+                    </div>
+                  )
+                ) : (
+                  <Image
+                    src="/casewise_Icon.svg"
+                    alt="AI"
+                    width={32}
+                    height={32}
+                    className="w-full h-full object-cover"
+                  />
+                )}
+              </div>
               {/* Message Content */}
               <div
                 className={`rounded-lg p-3 ${

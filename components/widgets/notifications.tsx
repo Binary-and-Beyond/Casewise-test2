@@ -2,6 +2,7 @@
 import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { apiService } from "@/lib/api";
+import { formatTimeAgo } from "@/lib/timestamp-utils";
 
 interface Notification {
   id: string;
@@ -43,44 +44,7 @@ export function Notifications({ onBack }: NotificationsProps) {
 
   const [filter, setFilter] = useState<"all" | "unread" | "read">("all");
 
-  const formatTimeAgo = (dateString: string) => {
-    try {
-      const date = new Date(dateString);
-      const now = new Date();
-
-      // Check if date is valid
-      if (isNaN(date.getTime())) {
-        return "Invalid date";
-      }
-
-      const diffInSeconds = Math.floor((now.getTime() - date.getTime()) / 1000);
-
-      // Handle future dates (negative values)
-      if (diffInSeconds < 0) {
-        return "Just now";
-      }
-
-      if (diffInSeconds < 60) return `${diffInSeconds} seconds ago`;
-      if (diffInSeconds < 3600)
-        return `${Math.floor(diffInSeconds / 60)} minutes ago`;
-      if (diffInSeconds < 86400)
-        return `${Math.floor(diffInSeconds / 3600)} hours ago`;
-      if (diffInSeconds < 2592000)
-        return `${Math.floor(diffInSeconds / 86400)} days ago`;
-
-      // For dates older than 30 days, show the actual date
-      return date.toLocaleDateString("en-US", {
-        year: "numeric",
-        month: "short",
-        day: "numeric",
-        hour: "2-digit",
-        minute: "2-digit",
-      });
-    } catch (error) {
-      console.error("Error formatting date:", error);
-      return "Invalid date";
-    }
-  };
+  // Using the imported formatTimeAgo utility function
 
   const getNotificationType = (type: string) => {
     switch (type) {
