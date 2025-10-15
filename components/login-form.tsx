@@ -171,8 +171,8 @@ export function LoginForm({
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               onFocus={() => {
-                setPasswordFocused(true);
-                setShowPassword(true); // Show password when first focused
+                setPasswordFocused(false);
+                setShowPassword(false); // Show password when first focused
               }}
               onBlur={() => {
                 setPasswordFocused(false);

@@ -353,6 +353,22 @@ export function ChatbotFlow({ document, onBack }: ChatbotFlowProps) {
     setCurrentStep("case-selection");
   };
 
+  const handleStartOverWithWarning = () => {
+    handleNavigationAttempt(handleStartOver);
+  };
+
+  const handleBackToOptions = () => {
+    setCurrentStep("case-options");
+  };
+
+  const handleBackToOptionsWithWarning = () => {
+    handleNavigationAttempt(handleBackToOptions);
+  };
+
+  const handleBackToDashboardWithWarning = () => {
+    handleNavigationAttempt(onBack);
+  };
+
   const toggleQuestion = (index: number) => {
     setExpandedQuestions((prev) =>
       prev.includes(index) ? prev.filter((i) => i !== index) : [...prev, index]
@@ -362,9 +378,16 @@ export function ChatbotFlow({ document, onBack }: ChatbotFlowProps) {
   // MCQ completion handlers
   const handleMCQCompletion = useCallback(
     (correctAnswers: number, totalQuestions: number) => {
+      console.log("🎯 MCQ Completion triggered!");
+      console.log("📊 Correct answers:", correctAnswers);
+      console.log("📊 Total questions:", totalQuestions);
+
       setCompletionStats({ correct: correctAnswers, total: totalQuestions });
       setShowCompletionPopup(true);
       setHasUnsavedProgress(false); // Progress is now saved/completed
+
+      console.log("✅ Completion popup should now be visible");
+      console.log("🔍 showCompletionPopup state should be true");
     },
     []
   );
@@ -374,8 +397,30 @@ export function ChatbotFlow({ document, onBack }: ChatbotFlowProps) {
     setShowCompletionPopup(false);
   };
 
-  const handleCompletionPopupContinue = () => {
+  const handleCompletionPopupContinue = async () => {
     console.log("🔄 Finishing completion popup (chatbot-flow)");
+    console.log("📊 Completion stats:", completionStats);
+    console.log("📋 Selected case:", selectedCase);
+
+    try {
+      // Update user analytics with MCQ completion data
+      const analyticsData = {
+        correct_answers: completionStats.correct,
+        total_questions: completionStats.total,
+        case_id: selectedCase?.id,
+      };
+
+      console.log("📤 Sending analytics data:", analyticsData);
+
+      const result = await apiService.updateMCQAnalytics(analyticsData);
+
+      console.log("✅ Analytics updated successfully:", result);
+    } catch (error) {
+      console.error("❌ Failed to update analytics:", error);
+      console.error("❌ Error details:", error);
+      // Don't block the user flow if analytics update fails
+    }
+
     setShowCompletionPopup(false);
     // Could navigate to next section or show summary
   };
@@ -728,7 +773,7 @@ export function ChatbotFlow({ document, onBack }: ChatbotFlowProps) {
           <p className="text-gray-600">Document: {document.filename}</p>
         </div>
         <Button
-          onClick={onBack}
+          onClick={handleBackToDashboardWithWarning}
           variant="outline"
           className="border-gray-300 text-gray-700"
         >

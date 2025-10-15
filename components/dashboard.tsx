@@ -3,7 +3,7 @@ import React, { useState, useEffect, useRef, useCallback } from "react";
 import Image from "next/image";
 
 import { Sidebar } from "@/components/layout/sidebar";
-import { AdminAnalyticsTable } from "@/components/widgets/admin-analytics-table";
+import { MyAnalytics } from "@/components/widgets/my-analytics";
 import { FileUploadArea } from "@/components/widgets/file-upload-area";
 import { CasesList } from "@/components/widgets/cases-list";
 import { Breadcrumb } from "@/components/widgets/breadcrumb";
@@ -62,32 +62,7 @@ export function Dashboard({}: DashboardProps) {
     | "profile-settings"
     | "notifications"
     | "chatbot-flow"
-  >(() => {
-    // Load saved view from localStorage, default to main if none exists
-    if (typeof window !== "undefined") {
-      const savedView = localStorage.getItem("current_view");
-      if (
-        savedView &&
-        [
-          "main",
-          "admin-analytics",
-          "generate-cases",
-          "case-selection",
-          "generate-mcqs",
-          "explore-cases",
-          "identify-concepts",
-          "concept-detail",
-          "profile-settings",
-          "notifications",
-          "chatbot-flow",
-        ].includes(savedView)
-      ) {
-        console.log("🚀 Restoring saved view:", savedView);
-        return savedView as any;
-      }
-    }
-    return "main";
-  });
+  >("main"); // Always start with main view on page reload
   const [selectedCase, setSelectedCase] = useState<string>(() => {
     // Load saved selected case from localStorage
     if (typeof window !== "undefined") {
@@ -265,6 +240,13 @@ export function Dashboard({}: DashboardProps) {
       setCurrentView("identify-concepts");
     }
   }, [currentView, selectedConcept]);
+
+  // Clear any saved view on component mount to ensure we always start with main
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      localStorage.removeItem("current_view");
+    }
+  }, []);
 
   // Load chats immediately on component mount if available in localStorage
   useEffect(() => {
@@ -1679,12 +1661,14 @@ export function Dashboard({}: DashboardProps) {
       case "generate-mcqs":
         return {
           label: "Back to Case",
-          onClick: () => setCurrentView("case-selection"),
+          onClick: () =>
+            handleNavigationAttempt(() => setCurrentView("case-selection")),
         };
       case "explore-cases":
         return {
           label: "Back to Case",
-          onClick: () => setCurrentView("case-selection"),
+          onClick: () =>
+            handleNavigationAttempt(() => setCurrentView("case-selection")),
         };
       case "identify-concepts":
         return {
@@ -2206,18 +2190,18 @@ export function Dashboard({}: DashboardProps) {
       | "chatbot-flow"
   ) => {
     // Check if we're currently in MCQ view and have unsaved progress
-    if (currentView === "explore-cases" && hasUnsavedProgress) {
+    if (
+      (currentView === "explore-cases" || currentView === "generate-mcqs") &&
+      hasUnsavedProgress
+    ) {
       handleNavigationAttempt(() => {
         setUploadError("");
         setCurrentView(view);
-        localStorage.setItem("current_view", view);
       });
     } else {
       // Clear any error messages when changing views
       setUploadError("");
       setCurrentView(view);
-      // Save current view to localStorage
-      localStorage.setItem("current_view", view);
     }
   };
 
@@ -2236,7 +2220,6 @@ export function Dashboard({}: DashboardProps) {
       | "chatbot-flow"
   ) => {
     setCurrentView(view);
-    localStorage.setItem("current_view", view);
   };
 
   const setSelectedCaseWithPersistence = (caseTitle: string) => {
@@ -2265,8 +2248,41 @@ export function Dashboard({}: DashboardProps) {
     setShowCompletionPopup(false);
   };
 
-  const handleCompletionPopupContinue = () => {
-    console.log("🔄 Finishing completion popup");
+  const [isUpdatingAnalytics, setIsUpdatingAnalytics] = useState(false);
+
+  const handleCompletionPopupContinue = async () => {
+    // Prevent multiple clicks
+    if (isUpdatingAnalytics) {
+      console.log("⏳ Analytics update already in progress, ignoring click");
+      return;
+    }
+
+    console.log("🔄 Finishing completion popup (dashboard)");
+    console.log("📊 Completion stats:", completionStats);
+
+    setIsUpdatingAnalytics(true);
+
+    try {
+      // Update user analytics with MCQ completion data
+      const analyticsData = {
+        correct_answers: completionStats.correct,
+        total_questions: completionStats.total,
+        case_id: null, // Dashboard doesn't have case context
+      };
+
+      console.log("📤 Sending analytics data:", analyticsData);
+
+      const result = await apiService.updateMCQAnalytics(analyticsData);
+
+      console.log("✅ Analytics updated successfully:", result);
+    } catch (error) {
+      console.error("❌ Failed to update analytics:", error);
+      console.error("❌ Error details:", error);
+      // Don't block the user flow if analytics update fails
+    } finally {
+      setIsUpdatingAnalytics(false);
+    }
+
     setShowCompletionPopup(false);
     // Could navigate to next section or show summary
   };
@@ -2300,9 +2316,7 @@ export function Dashboard({}: DashboardProps) {
     setHasUnsavedProgress(true);
   };
 
-  const renderAdminAnalytics = () => (
-    <AdminAnalyticsTable analyticsData={analyticsData} />
-  );
+  const renderMyAnalytics = () => <MyAnalytics />;
 
   const renderMainDashboard = () => {
     const currentFile = getCurrentChatFile();
@@ -2624,7 +2638,11 @@ export function Dashboard({}: DashboardProps) {
             <div className="text-right">
               <p
                 className="text-sm font-medium text-gray-900 cursor-pointer hover:text-blue-600"
-                onClick={() => setCurrentView("case-selection")}
+                onClick={() =>
+                  handleNavigationAttempt(() =>
+                    setCurrentView("case-selection")
+                  )
+                }
               >
                 Options
               </p>
@@ -2717,7 +2735,11 @@ export function Dashboard({}: DashboardProps) {
             <div className="text-right">
               <p
                 className="text-sm font-medium text-gray-900 cursor-pointer hover:text-blue-600"
-                onClick={() => setCurrentView("case-selection")}
+                onClick={() =>
+                  handleNavigationAttempt(() =>
+                    setCurrentView("case-selection")
+                  )
+                }
               >
                 Options
               </p>
@@ -2798,7 +2820,11 @@ export function Dashboard({}: DashboardProps) {
             <div className="text-right">
               <p
                 className="text-sm font-medium text-gray-900 cursor-pointer hover:text-blue-600"
-                onClick={() => setCurrentView("case-selection")}
+                onClick={() =>
+                  handleNavigationAttempt(() =>
+                    setCurrentView("case-selection")
+                  )
+                }
               >
                 Options
               </p>
@@ -2996,7 +3022,7 @@ export function Dashboard({}: DashboardProps) {
 
       <div className="flex-1 ml-64 relative z-0">
         {currentView === "main" && renderMainDashboard()}
-        {currentView === "admin-analytics" && renderAdminAnalytics()}
+        {currentView === "admin-analytics" && renderMyAnalytics()}
         {currentView === "case-selection" && renderCaseSelection()}
         {currentView === "generate-mcqs" && renderGenerateMCQs()}
         {currentView === "explore-cases" && renderExploreCases()}
@@ -3022,6 +3048,7 @@ export function Dashboard({}: DashboardProps) {
         totalQuestions={completionStats.total}
         onClose={handleCompletionPopupClose}
         onContinue={handleCompletionPopupContinue}
+        isUpdating={isUpdatingAnalytics}
       />
 
       {/* Navigation Warning Popup */}

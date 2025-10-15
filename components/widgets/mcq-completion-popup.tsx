@@ -8,6 +8,7 @@ interface MCQCompletionPopupProps {
   totalQuestions: number;
   onClose: () => void;
   onContinue: () => void;
+  isUpdating?: boolean;
 }
 
 export function MCQCompletionPopup({
@@ -16,8 +17,20 @@ export function MCQCompletionPopup({
   totalQuestions,
   onClose,
   onContinue,
+  isUpdating = false,
 }: MCQCompletionPopupProps) {
-  if (!isOpen) return null;
+  console.log("🎭 MCQCompletionPopup render:", {
+    isOpen,
+    correctAnswers,
+    totalQuestions,
+  });
+
+  if (!isOpen) {
+    console.log("❌ Popup not open, returning null");
+    return null;
+  }
+
+  console.log("✅ Popup is open, rendering popup");
 
   const percentage = Math.round((correctAnswers / totalQuestions) * 100);
   const isPassing = percentage >= 60; // 60% or higher is considered passing
@@ -59,10 +72,27 @@ export function MCQCompletionPopup({
 
           {/* Action Button */}
           <button
-            onClick={onContinue}
-            className="bg-blue-600 hover:bg-blue-700 text-white px-8 py-3 rounded-lg font-medium transition-colors"
+            onClick={() => {
+              if (!isUpdating) {
+                console.log("🔘 Finish button clicked in popup");
+                onContinue();
+              }
+            }}
+            disabled={isUpdating}
+            className={`px-8 py-3 rounded-lg font-medium transition-colors ${
+              isUpdating
+                ? "bg-gray-400 text-gray-200 cursor-not-allowed"
+                : "bg-blue-600 hover:bg-blue-700 text-white"
+            }`}
           >
-            Finish
+            {isUpdating ? (
+              <div className="flex items-center">
+                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
+                Updating...
+              </div>
+            ) : (
+              "Finish"
+            )}
           </button>
         </div>
       </div>

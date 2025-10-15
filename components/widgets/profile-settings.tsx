@@ -20,6 +20,12 @@ export function ProfileSettings({ onBack }: ProfileSettingsProps) {
     bio: "",
   });
 
+  const [passwordData, setPasswordData] = useState({
+    current_password: "",
+    new_password: "",
+    confirm_password: "",
+  });
+
   const [profileImage, setProfileImage] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -66,6 +72,61 @@ export function ProfileSettings({ onBack }: ProfileSettingsProps) {
       ...prev,
       [field]: value,
     }));
+  };
+
+  const handlePasswordChange = (field: string, value: string) => {
+    setPasswordData((prev) => ({
+      ...prev,
+      [field]: value,
+    }));
+  };
+
+  const handlePasswordSubmit = async () => {
+    if (passwordData.new_password !== passwordData.confirm_password) {
+      setMessage({
+        type: "error",
+        text: "New passwords do not match",
+      });
+      return;
+    }
+
+    if (passwordData.new_password.length < 6) {
+      setMessage({
+        type: "error",
+        text: "New password must be at least 6 characters long",
+      });
+      return;
+    }
+
+    setIsLoading(true);
+    setMessage(null);
+
+    try {
+      await apiService.changePassword({
+        current_password: passwordData.current_password,
+        new_password: passwordData.new_password,
+      });
+
+      setMessage({
+        type: "success",
+        text: "Password changed successfully",
+      });
+
+      // Clear password fields
+      setPasswordData({
+        current_password: "",
+        new_password: "",
+        confirm_password: "",
+      });
+    } catch (error) {
+      setMessage({
+        type: "error",
+        text:
+          error instanceof Error ? error.message : "Failed to change password",
+      });
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -287,6 +348,84 @@ export function ProfileSettings({ onBack }: ProfileSettingsProps) {
                   className="mt-1 w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                   rows={3}
                 />
+              </div>
+            </div>
+          </div>
+
+          {/* Password Change Section */}
+          <div>
+            <h2 className="text-lg font-medium text-gray-900 mb-4">
+              Change Password
+            </h2>
+            <div className="grid grid-cols-1 gap-6">
+              <div>
+                <Label
+                  htmlFor="current_password"
+                  className="text-sm font-medium text-gray-700"
+                >
+                  Current Password
+                </Label>
+                <Input
+                  id="current_password"
+                  type="password"
+                  placeholder="Enter current password"
+                  value={passwordData.current_password}
+                  onChange={(e) =>
+                    handlePasswordChange("current_password", e.target.value)
+                  }
+                  className="mt-1"
+                />
+              </div>
+              <div>
+                <Label
+                  htmlFor="new_password"
+                  className="text-sm font-medium text-gray-700"
+                >
+                  New Password
+                </Label>
+                <Input
+                  id="new_password"
+                  type="password"
+                  placeholder="Enter new password"
+                  value={passwordData.new_password}
+                  onChange={(e) =>
+                    handlePasswordChange("new_password", e.target.value)
+                  }
+                  className="mt-1"
+                />
+              </div>
+              <div>
+                <Label
+                  htmlFor="confirm_password"
+                  className="text-sm font-medium text-gray-700"
+                >
+                  Confirm New Password
+                </Label>
+                <Input
+                  id="confirm_password"
+                  type="password"
+                  placeholder="Confirm new password"
+                  value={passwordData.confirm_password}
+                  onChange={(e) =>
+                    handlePasswordChange("confirm_password", e.target.value)
+                  }
+                  className="mt-1"
+                />
+              </div>
+              <div className="flex justify-end">
+                <Button
+                  type="button"
+                  onClick={handlePasswordSubmit}
+                  disabled={
+                    isLoading ||
+                    !passwordData.current_password ||
+                    !passwordData.new_password ||
+                    !passwordData.confirm_password
+                  }
+                  className="bg-green-600 hover:bg-green-700 text-white px-6 py-2 disabled:opacity-50"
+                >
+                  Change Password
+                </Button>
               </div>
             </div>
           </div>

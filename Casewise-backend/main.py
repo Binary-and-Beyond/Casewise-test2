@@ -368,6 +368,18 @@ class DocumentResponse(BaseModel):
     uploaded_at: datetime
     content: Optional[str] = None
 
+class UserAnalytics(BaseModel):
+    """User analytics response schema"""
+    name: str
+    timeSpent: str
+    casesUploaded: int
+    mcqAttempted: int
+    mostQuestionsType: str
+    totalQuestionsCorrect: int
+    totalQuestionsAttempted: int
+    averageScore: int
+    lastActiveDate: str
+
 class CaseGenerationRequest(BaseModel):
     """Case generation request schema"""
     document_id: str
@@ -1351,6 +1363,186 @@ async def get_unread_count(
         raise HTTPException(
             status_code=500, 
             detail="Failed to get unread count"
+        )
+
+@app.get("/analytics/user", response_model=UserAnalytics)
+async def get_user_analytics(current_user: dict = Depends(get_current_user)):
+    """Get user analytics and statistics"""
+    
+    try:
+        user_id = current_user["id"]
+        
+        # Get user info
+        user = db.users.find_one({"_id": ObjectId(user_id)})
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+        
+        # Calculate statistics
+        # Count documents uploaded by user
+        cases_uploaded = db.documents.count_documents({"uploaded_by": user_id})
+        
+        # Get MCQ statistics from user document
+        mcq_attempted = user.get("mcq_attempted", 0)
+        total_questions_correct = user.get("total_questions_correct", 0)
+        total_questions_attempted = user.get("total_questions_attempted", 0)
+        
+        # Get chat sessions to calculate time spent (optimized)
+        chat_count = db.chats.count_documents({"user_id": user_id})
+        
+        # Calculate time spent (simplified - could be more sophisticated)
+        time_spent_minutes = chat_count * 5  # Assume 5 minutes per chat session
+        if time_spent_minutes < 60:
+            time_spent = f"{time_spent_minutes} mins"
+        else:
+            hours = time_spent_minutes // 60
+            minutes = time_spent_minutes % 60
+            time_spent = f"{hours}h {minutes}m"
+        
+        # Determine most common question type (placeholder)
+        most_questions_type = "Easy"  # This would be calculated from actual data
+        
+        # Calculate average score
+        average_score = 0
+        if total_questions_attempted > 0:
+            average_score = int((total_questions_correct / total_questions_attempted) * 100)
+        
+        # Get last active date
+        last_active_date = user.get("updated_at", user.get("created_at", datetime.now()))
+        if isinstance(last_active_date, datetime):
+            last_active_date = last_active_date.strftime("%Y-%m-%d")
+        else:
+            last_active_date = datetime.now().strftime("%Y-%m-%d")
+        
+        # Build response
+        analytics = UserAnalytics(
+            name=user.get("full_name", user.get("username", "User")),
+            timeSpent=time_spent,
+            casesUploaded=cases_uploaded,
+            mcqAttempted=mcq_attempted,
+            mostQuestionsType=most_questions_type,
+            totalQuestionsCorrect=total_questions_correct,
+            totalQuestionsAttempted=total_questions_attempted,
+            averageScore=average_score,
+            lastActiveDate=last_active_date
+        )
+        
+        return analytics
+        
+    except Exception as e:
+        print(f"Error getting user analytics: {str(e)}")
+        raise HTTPException(
+            status_code=500, 
+            detail="Failed to get user analytics"
+        )
+
+class MCQCompletionRequest(BaseModel):
+    """MCQ completion request schema"""
+    correct_answers: int
+    total_questions: int
+    case_id: Optional[str] = None
+
+@app.post("/analytics/mcq-completion")
+async def update_mcq_analytics(
+    request: MCQCompletionRequest,
+    current_user: dict = Depends(get_current_user)
+):
+    """Update user analytics after MCQ completion"""
+    
+    print(f"🔄 MCQ Analytics Update Request:")
+    print(f"   User ID: {current_user.get('id', 'N/A')}")
+    print(f"   Correct Answers: {request.correct_answers}")
+    print(f"   Total Questions: {request.total_questions}")
+    print(f"   Case ID: {request.case_id}")
+    
+    try:
+        user_id = current_user["id"]
+        
+        # Get user info
+        user = db.users.find_one({"_id": ObjectId(user_id)})
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+        
+        # Update user's MCQ statistics
+        # For now, we'll store this in the user document
+        # In a real app, you might want a separate analytics collection
+        
+        current_mcq_attempted = user.get("mcq_attempted", 0)
+        current_correct = user.get("total_questions_correct", 0)
+        current_attempted = user.get("total_questions_attempted", 0)
+        
+        # Update the statistics
+        # mcq_attempted should count total questions attempted, not cases
+        new_mcq_attempted = current_mcq_attempted + request.total_questions
+        new_correct = current_correct + request.correct_answers
+        new_attempted = current_attempted + request.total_questions
+        
+        # Calculate new average score
+        new_average_score = int((new_correct / new_attempted) * 100) if new_attempted > 0 else 0
+        
+        # Update user document
+        update_result = db.users.update_one(
+            {"_id": ObjectId(user_id)},
+            {
+                "$set": {
+                    "mcq_attempted": new_mcq_attempted,
+                    "total_questions_correct": new_correct,
+                    "total_questions_attempted": new_attempted,
+                    "average_score": new_average_score,
+                    "updated_at": datetime.now()
+                }
+            }
+        )
+        
+        print(f"📊 Database update result: {update_result.modified_count} documents modified")
+        print(f"📊 New stats: MCQ={new_mcq_attempted}, Correct={new_correct}, Total={new_attempted}, Avg={new_average_score}%")
+        
+        return {
+            "message": "Analytics updated successfully",
+            "updated_stats": {
+                "mcq_attempted": new_mcq_attempted,
+                "total_questions_correct": new_correct,
+                "total_questions_attempted": new_attempted,
+                "average_score": new_average_score
+            }
+        }
+        
+    except Exception as e:
+        print(f"Error updating MCQ analytics: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to update analytics"
+        )
+
+@app.post("/analytics/clear")
+async def clear_user_analytics(current_user: dict = Depends(get_current_user)):
+    """Clear analytics data for the current user"""
+    
+    try:
+        user_id = current_user["id"]
+        
+        # Clear analytics fields for the user
+        result = db.users.update_one(
+            {"_id": ObjectId(user_id)},
+            {
+                "$unset": {
+                    "mcq_attempted": "",
+                    "total_questions_correct": "",
+                    "total_questions_attempted": "",
+                    "average_score": ""
+                }
+            }
+        )
+        
+        if result.modified_count > 0:
+            return {"message": "Analytics data cleared successfully"}
+        else:
+            return {"message": "No analytics data found to clear"}
+        
+    except Exception as e:
+        print(f"Error clearing analytics: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to clear analytics"
         )
 
 @app.post("/documents/upload", response_model=DocumentResponse, status_code=status.HTTP_201_CREATED)

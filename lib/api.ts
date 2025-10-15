@@ -171,6 +171,18 @@ export interface AutoGenerationResponse {
   message: string;
 }
 
+export interface UserAnalytics {
+  name: string;
+  timeSpent: string;
+  casesUploaded: number;
+  mcqAttempted: number;
+  mostQuestionsType: string;
+  totalQuestionsCorrect: number;
+  totalQuestionsAttempted: number;
+  averageScore: number;
+  lastActiveDate: string;
+}
+
 class ApiService {
   private getAuthToken(): string | null {
     if (typeof window !== "undefined") {
@@ -434,6 +446,72 @@ class ApiService {
       credentials: "include",
       body: JSON.stringify(passwordData),
     });
+    return this.handleResponse<any>(response);
+  }
+
+  async updateMCQAnalytics(data: {
+    correct_answers: number;
+    total_questions: number;
+    case_id?: string;
+  }): Promise<any> {
+    console.log("🌐 API: Updating MCQ analytics...");
+    console.log("🌐 API: Data:", data);
+    console.log("🌐 API: Headers:", this.getHeaders());
+    console.log("🌐 API: URL:", `${API_BASE_URL}/analytics/mcq-completion`);
+
+    const response = await fetch(`${API_BASE_URL}/analytics/mcq-completion`, {
+      method: "POST",
+      headers: this.getHeaders(),
+      mode: "cors",
+      credentials: "include",
+      body: JSON.stringify(data),
+    });
+
+    console.log("🌐 API: Update analytics response status:", response.status);
+    console.log("🌐 API: Update analytics response ok:", response.ok);
+
+    if (!response.ok) {
+      console.log(
+        "🌐 API: Update analytics response not ok, trying to get error details..."
+      );
+      try {
+        const errorText = await response.text();
+        console.log("🌐 API: Update analytics error response text:", errorText);
+      } catch (e) {
+        console.log("🌐 API: Could not read update analytics error response");
+      }
+      throw new Error(`Failed to update analytics: ${response.statusText}`);
+    }
+    return this.handleResponse<any>(response);
+  }
+
+  async clearAnalytics(): Promise<any> {
+    console.log("🌐 API: Clearing user analytics...");
+    console.log("🌐 API: Headers:", this.getHeaders());
+    console.log("🌐 API: URL:", `${API_BASE_URL}/analytics/clear`);
+
+    const response = await fetch(`${API_BASE_URL}/analytics/clear`, {
+      method: "POST",
+      headers: this.getHeaders(),
+      mode: "cors",
+      credentials: "include",
+    });
+
+    console.log("🌐 API: Clear analytics response status:", response.status);
+    console.log("🌐 API: Clear analytics response ok:", response.ok);
+
+    if (!response.ok) {
+      console.log(
+        "🌐 API: Clear analytics response not ok, trying to get error details..."
+      );
+      try {
+        const errorText = await response.text();
+        console.log("🌐 API: Clear analytics error response text:", errorText);
+      } catch (e) {
+        console.log("🌐 API: Could not read clear analytics error response");
+      }
+      throw new Error(`Failed to clear analytics: ${response.statusText}`);
+    }
     return this.handleResponse<any>(response);
   }
 
@@ -861,6 +939,36 @@ class ApiService {
       body: JSON.stringify(request),
     });
     return this.handleResponse<any>(response);
+  }
+
+  async getUserAnalytics(): Promise<UserAnalytics> {
+    console.log("🌐 API: Getting user analytics...");
+    console.log("🌐 API: Headers:", this.getHeaders());
+    console.log("🌐 API: URL:", `${API_BASE_URL}/analytics/user`);
+
+    const response = await fetch(`${API_BASE_URL}/analytics/user`, {
+      method: "GET",
+      headers: this.getHeaders(),
+      mode: "cors",
+      credentials: "include",
+    });
+
+    console.log("🌐 API: Get analytics response status:", response.status);
+    console.log("🌐 API: Get analytics response ok:", response.ok);
+
+    if (!response.ok) {
+      console.log(
+        "🌐 API: Get analytics response not ok, trying to get error details..."
+      );
+      try {
+        const errorText = await response.text();
+        console.log("🌐 API: Get analytics error response text:", errorText);
+      } catch (e) {
+        console.log("🌐 API: Could not read get analytics error response");
+      }
+      throw new Error(`Failed to get user analytics: ${response.statusText}`);
+    }
+    return this.handleResponse<UserAnalytics>(response);
   }
 }
 

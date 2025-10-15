@@ -227,9 +227,9 @@ export function SignUpForm({ onLoginClick, onSignUpSuccess }: SignUpFormProps) {
                 setShowPasswordRequirements(e.target.value.length > 0);
               }}
               onFocus={() => {
-                setPasswordFocused(true);
+                setPasswordFocused(false);
                 setShowPasswordRequirements(true);
-                setShowPassword(true); // Show password when first focused
+                setShowPassword(false); // Show password when first focused
               }}
               onBlur={() => {
                 setPasswordFocused(false);
@@ -250,9 +250,9 @@ export function SignUpForm({ onLoginClick, onSignUpSuccess }: SignUpFormProps) {
               className="absolute right-3 top-1/2 -translate-y-1/2 transition-transform duration-200"
             >
               {showPassword ? (
-                <BiShow className="h-5 w-5 opacity-60 hover:opacity-100" />
-              ) : (
                 <BiHide className="h-5 w-5 opacity-60 hover:opacity-100" />
+              ) : (
+                <BiShow className="h-5 w-5 opacity-60 hover:opacity-100" />
               )}
             </button>
           </div>

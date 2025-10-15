@@ -39,6 +39,8 @@ export function InteractiveMCQQuestionsList({
   const [correctAnswers, setCorrectAnswers] = useState<Set<string>>(new Set());
 
   const handleQuestionCompleted = (questionId: string, isCorrect: boolean) => {
+    console.log(`✅ Question ${questionId} completed. Correct: ${isCorrect}`);
+
     setCompletedQuestions((prev) => new Set([...prev, questionId]));
     if (isCorrect) {
       setCorrectAnswers((prev) => new Set([...prev, questionId]));
@@ -46,8 +48,14 @@ export function InteractiveMCQQuestionsList({
   };
 
   useEffect(() => {
+    console.log("🔍 MCQ Questions List - Checking completion status:");
+    console.log("   Completed questions:", completedQuestions.size);
+    console.log("   Total questions:", questions.length);
+    console.log("   Correct answers:", correctAnswers.size);
+
     // Check if all questions are completed
     if (completedQuestions.size === questions.length && questions.length > 0) {
+      console.log("🎉 All questions completed! Triggering completion callback");
       onAllQuestionsCompleted?.(correctAnswers.size, questions.length);
     }
   }, [

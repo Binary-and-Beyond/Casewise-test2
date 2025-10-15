@@ -59,12 +59,16 @@ export function InteractiveMCQQuestion({
     )?.is_correct;
 
     if (isCorrect) {
+      console.log(`🎯 Question ${question.id} answered correctly!`);
       setHasAnswered(true);
       setShowExplanation(false);
       setIsCompleted(true);
       // Notify parent that question is completed correctly
       onQuestionCompleted?.(question.id, true);
     } else if (attempts + 1 >= 3) {
+      console.log(
+        `❌ Question ${question.id} completed after 3 attempts (incorrect)`
+      );
       // After 3 attempts, automatically show the explanation
       setHasAnswered(true);
       setShowAnswer(true);
