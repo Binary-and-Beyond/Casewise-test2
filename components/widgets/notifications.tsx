@@ -4,6 +4,42 @@ import { Button } from "@/components/ui/button";
 import { apiService } from "@/lib/api";
 import { formatTimeAgo } from "@/lib/timestamp-utils";
 
+// Dynamic time component that updates frequently
+function DynamicTimeAgo({ dateString }: { dateString: string }) {
+  const [timeAgo, setTimeAgo] = useState(() => formatTimeAgo(dateString));
+  const [forceUpdate, setForceUpdate] = useState(0);
+
+  useEffect(() => {
+    // Update immediately
+    setTimeAgo(formatTimeAgo(dateString));
+
+    // Update every 10 seconds for more responsive updates
+    const interval = setInterval(() => {
+      const newTimeAgo = formatTimeAgo(dateString);
+      setTimeAgo(newTimeAgo);
+      // Force re-render by updating a counter
+      setForceUpdate((prev) => prev + 1);
+    }, 10000); // 10 seconds
+
+    return () => clearInterval(interval);
+  }, [dateString]);
+
+  // Also update when the component is visible (handles tab switching)
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (!document.hidden) {
+        setTimeAgo(formatTimeAgo(dateString));
+      }
+    };
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () =>
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+  }, [dateString]);
+
+  return <span key={forceUpdate}>{timeAgo}</span>;
+}
+
 interface Notification {
   id: string;
   title: string;
@@ -33,6 +69,16 @@ export function Notifications({ onBack }: NotificationsProps) {
       setIsLoading(true);
       setError(null);
       const data = await apiService.getNotifications(50, false);
+      console.log("Loaded notifications:", data.length, "notifications");
+      // Debug: log the first notification's timestamp
+      if (data.length > 0) {
+        console.log(
+          "First notification timestamp:",
+          data[0].created_at,
+          "formatted:",
+          formatTimeAgo(data[0].created_at)
+        );
+      }
       setNotifications(data);
     } catch (err: any) {
       console.error("Failed to load notifications:", err);
@@ -172,15 +218,25 @@ export function Notifications({ onBack }: NotificationsProps) {
           <h1 className="text-2xl font-semibold text-gray-900">
             Notifications
           </h1>
-          {unreadCount > 0 && (
+          <div className="flex items-center space-x-2">
             <Button
-              onClick={markAllAsRead}
+              onClick={loadNotifications}
               variant="outline"
               className="text-sm"
+              disabled={isLoading}
             >
-              Mark all as read
+              {isLoading ? "Refreshing..." : "Refresh"}
             </Button>
-          )}
+            {unreadCount > 0 && (
+              <Button
+                onClick={markAllAsRead}
+                variant="outline"
+                className="text-sm"
+              >
+                Mark all as read
+              </Button>
+            )}
+          </div>
         </div>
       </div>
 
@@ -295,7 +351,9 @@ export function Notifications({ onBack }: NotificationsProps) {
                       </h3>
                       <div className="flex items-center space-x-2">
                         <span className="text-xs text-gray-500">
-                          {formatTimeAgo(notification.created_at)}
+                          <DynamicTimeAgo
+                            dateString={notification.created_at}
+                          />
                         </span>
                         {!notification.is_read && (
                           <div className="w-2 h-2 bg-blue-500 rounded-full"></div>

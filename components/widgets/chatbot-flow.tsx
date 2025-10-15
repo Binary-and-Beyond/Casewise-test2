@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import {
   apiService,
@@ -14,6 +14,8 @@ import { MCQQuestionsList } from "./mcq-questions-list";
 import { InteractiveMCQQuestionsList } from "./interactive-mcq-questions-list";
 import { ConceptsList } from "./concepts-list";
 import { AIChat } from "./ai-chat";
+import { MCQCompletionPopup } from "./mcq-completion-popup";
+import { NavigationWarningPopup } from "./navigation-warning-popup";
 
 type ChatbotStep =
   | "welcome"
@@ -34,22 +36,162 @@ export function ChatbotFlow({ document, onBack }: ChatbotFlowProps) {
   const [error, setError] = useState("");
 
   // Data states
-  const [caseTitles, setCaseTitles] = useState<CaseTitle[]>([]);
+  const [caseTitles, setCaseTitles] = useState<CaseTitle[]>(() => {
+    if (typeof window !== "undefined") {
+      try {
+        const cachedCases = localStorage.getItem(`case_titles_${document.id}`);
+        if (cachedCases) {
+          const parsedCases = JSON.parse(cachedCases);
+          console.log(
+            "🚀 Initializing case titles from localStorage for document:",
+            document.id,
+            parsedCases.length,
+            "cases"
+          );
+          return parsedCases;
+        }
+      } catch (e) {
+        console.log("❌ Failed to parse cached case titles on init:", e);
+      }
+    }
+    return [];
+  });
   const [selectedCase, setSelectedCase] = useState<{
     id: string;
     title: string;
   } | null>(null);
-  const [mcqQuestions, setMCQQuestions] = useState<MCQQuestion[]>([]);
-  const [concepts, setConcepts] = useState<Concept[]>([]);
+  const [mcqQuestions, setMCQQuestions] = useState<MCQQuestion[]>(() => {
+    if (typeof window !== "undefined") {
+      try {
+        const cachedMCQs = localStorage.getItem(`mcq_questions_${document.id}`);
+        if (cachedMCQs) {
+          const parsedMCQs = JSON.parse(cachedMCQs);
+          console.log(
+            "🚀 Initializing MCQ questions from localStorage for document:",
+            document.id,
+            parsedMCQs.length,
+            "questions"
+          );
+          return parsedMCQs;
+        }
+      } catch (e) {
+        console.log("❌ Failed to parse cached MCQ questions on init:", e);
+      }
+    }
+    return [];
+  });
+  const [concepts, setConcepts] = useState<Concept[]>(() => {
+    if (typeof window !== "undefined") {
+      try {
+        const cachedConcepts = localStorage.getItem(`concepts_${document.id}`);
+        if (cachedConcepts) {
+          const parsedConcepts = JSON.parse(cachedConcepts);
+          console.log(
+            "🚀 Initializing concepts from localStorage for document:",
+            document.id,
+            parsedConcepts.length,
+            "concepts"
+          );
+          return parsedConcepts;
+        }
+      } catch (e) {
+        console.log("❌ Failed to parse cached concepts on init:", e);
+      }
+    }
+    return [];
+  });
   const [chatId, setChatId] = useState<string | null>(null);
   const [expandedQuestions, setExpandedQuestions] = useState<number[]>([]);
+
+  // MCQ completion and navigation warning states
+  const [showCompletionPopup, setShowCompletionPopup] = useState(false);
+  const [completionStats, setCompletionStats] = useState({
+    correct: 0,
+    total: 0,
+  });
+  const [showNavigationWarning, setShowNavigationWarning] = useState(false);
+  const [pendingNavigation, setPendingNavigation] = useState<
+    (() => void) | null
+  >(null);
+  const [hasUnsavedProgress, setHasUnsavedProgress] = useState(false);
 
   // Initialize welcome step
   useEffect(() => {
     generateCaseTitles();
   }, []);
 
-  const generateCaseTitles = async () => {
+  // Persist MCQ questions to localStorage whenever they change
+  useEffect(() => {
+    if (typeof window !== "undefined" && mcqQuestions.length > 0) {
+      try {
+        localStorage.setItem(
+          `mcq_questions_${document.id}`,
+          JSON.stringify(mcqQuestions)
+        );
+        console.log(
+          "💾 Saved MCQ questions to localStorage for document:",
+          document.id,
+          mcqQuestions.length,
+          "questions"
+        );
+      } catch (e) {
+        console.log("❌ Failed to save MCQ questions to localStorage:", e);
+      }
+    }
+  }, [mcqQuestions, document.id]);
+
+  // Persist concepts to localStorage whenever they change
+  useEffect(() => {
+    if (typeof window !== "undefined" && concepts.length > 0) {
+      try {
+        localStorage.setItem(
+          `concepts_${document.id}`,
+          JSON.stringify(concepts)
+        );
+        console.log(
+          "💾 Saved concepts to localStorage for document:",
+          document.id,
+          concepts.length,
+          "concepts"
+        );
+      } catch (e) {
+        console.log("❌ Failed to save concepts to localStorage:", e);
+      }
+    }
+  }, [concepts, document.id]);
+
+  // Persist case titles to localStorage whenever they change
+  useEffect(() => {
+    if (typeof window !== "undefined" && caseTitles.length > 0) {
+      try {
+        localStorage.setItem(
+          `case_titles_${document.id}`,
+          JSON.stringify(caseTitles)
+        );
+        console.log(
+          "💾 Saved case titles to localStorage for document:",
+          document.id,
+          caseTitles.length,
+          "cases"
+        );
+      } catch (e) {
+        console.log("❌ Failed to save case titles to localStorage:", e);
+      }
+    }
+  }, [caseTitles, document.id]);
+
+  const generateCaseTitles = async (retryCount = 0) => {
+    // If we already have case titles, don't regenerate them
+    if (caseTitles.length > 0) {
+      console.log(
+        "🚀 Case titles already exist, skipping generation:",
+        caseTitles.length,
+        "cases"
+      );
+      setCurrentStep("case-selection");
+      return;
+    }
+
     setIsLoading(true);
     setError("");
     try {
@@ -57,11 +199,23 @@ export function ChatbotFlow({ document, onBack }: ChatbotFlowProps) {
       setCaseTitles(response.cases);
       setCurrentStep("case-selection");
     } catch (error) {
-      setError(
+      const errorMessage =
         error instanceof Error
           ? error.message
-          : "Failed to generate case titles"
-      );
+          : "Failed to generate case titles";
+      console.error("Generate case titles error:", error);
+
+      // Retry logic - retry up to 2 times
+      if (retryCount < 2) {
+        console.log(
+          `🔄 Retrying case title generation (attempt ${retryCount + 1}/2)...`
+        );
+        setTimeout(() => {
+          generateCaseTitles(retryCount + 1);
+        }, 2000); // Wait 2 seconds before retry
+      } else {
+        setError(`${errorMessage} (Failed after 3 attempts)`);
+      }
     } finally {
       setIsLoading(false);
     }
@@ -72,27 +226,71 @@ export function ChatbotFlow({ document, onBack }: ChatbotFlowProps) {
     setCurrentStep("case-options");
   };
 
-  const handleGenerateMCQs = async () => {
+  const handleGenerateMCQs = async (retryCount = 0) => {
+    // If we already have MCQ questions, check if they have hints
+    if (mcqQuestions.length > 0) {
+      const hasHints = mcqQuestions.some((q) => q.hint && q.hint.trim() !== "");
+      if (hasHints) {
+        console.log(
+          "🚀 MCQ questions with hints already exist, skipping generation:",
+          mcqQuestions.length,
+          "questions"
+        );
+        setCurrentStep("mcq-questions");
+        return;
+      } else {
+        console.log(
+          "🔄 MCQ questions exist but without hints, regenerating with hints:",
+          mcqQuestions.length,
+          "questions"
+        );
+      }
+    }
+
     setIsLoading(true);
     setError("");
     try {
       const response = await apiService.generateMCQs(
         document.id,
         selectedCase?.id,
-        5
+        5,
+        true // Include hints
       );
       setMCQQuestions(response.questions);
       setCurrentStep("mcq-questions");
     } catch (error) {
-      setError(
-        error instanceof Error ? error.message : "Failed to generate MCQs"
-      );
+      const errorMessage =
+        error instanceof Error ? error.message : "Failed to generate MCQs";
+      console.error("MCQ generation error:", error);
+
+      // Retry logic - retry up to 2 times
+      if (retryCount < 2) {
+        console.log(
+          `🔄 Retrying MCQ generation (attempt ${retryCount + 1}/2)...`
+        );
+        setTimeout(() => {
+          handleGenerateMCQs(retryCount + 1);
+        }, 2000); // Wait 2 seconds before retry
+      } else {
+        setError(`${errorMessage} (Failed after 3 attempts)`);
+      }
     } finally {
       setIsLoading(false);
     }
   };
 
-  const handleIdentifyConcepts = async () => {
+  const handleIdentifyConcepts = async (retryCount = 0) => {
+    // If we already have concepts, don't regenerate them
+    if (concepts.length > 0) {
+      console.log(
+        "🚀 Concepts already exist, skipping generation:",
+        concepts.length,
+        "concepts"
+      );
+      setCurrentStep("concepts");
+      return;
+    }
+
     setIsLoading(true);
     setError("");
     try {
@@ -100,17 +298,28 @@ export function ChatbotFlow({ document, onBack }: ChatbotFlowProps) {
       setConcepts(response.concepts);
       setCurrentStep("concepts");
     } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : "Unknown error";
       console.error("Identify concepts error:", error);
       console.error("Error details:", {
-        message: error instanceof Error ? error.message : "Unknown error",
+        message: errorMessage,
         stack: error instanceof Error ? error.stack : undefined,
         documentId: document.id,
       });
-      setError(
-        `Failed to identify concepts: ${
-          error instanceof Error ? error.message : "Unknown error"
-        }`
-      );
+
+      // Retry logic - retry up to 2 times
+      if (retryCount < 2) {
+        console.log(
+          `🔄 Retrying concept identification (attempt ${retryCount + 1}/2)...`
+        );
+        setTimeout(() => {
+          handleIdentifyConcepts(retryCount + 1);
+        }, 2000); // Wait 2 seconds before retry
+      } else {
+        setError(
+          `Failed to identify concepts: ${errorMessage} (Failed after 3 attempts)`
+        );
+      }
     } finally {
       setIsLoading(false);
     }
@@ -150,6 +359,56 @@ export function ChatbotFlow({ document, onBack }: ChatbotFlowProps) {
     );
   };
 
+  // MCQ completion handlers
+  const handleMCQCompletion = useCallback(
+    (correctAnswers: number, totalQuestions: number) => {
+      setCompletionStats({ correct: correctAnswers, total: totalQuestions });
+      setShowCompletionPopup(true);
+      setHasUnsavedProgress(false); // Progress is now saved/completed
+    },
+    []
+  );
+
+  const handleCompletionPopupClose = () => {
+    console.log("🔄 Closing completion popup (chatbot-flow)");
+    setShowCompletionPopup(false);
+  };
+
+  const handleCompletionPopupContinue = () => {
+    console.log("🔄 Finishing completion popup (chatbot-flow)");
+    setShowCompletionPopup(false);
+    // Could navigate to next section or show summary
+  };
+
+  // Track when user starts answering questions
+  const handleQuestionAttempted = () => {
+    setHasUnsavedProgress(true);
+  };
+
+  // Navigation warning handlers
+  const handleNavigationAttempt = (navigationFunction: () => void) => {
+    if (hasUnsavedProgress) {
+      setPendingNavigation(() => navigationFunction);
+      setShowNavigationWarning(true);
+    } else {
+      navigationFunction();
+    }
+  };
+
+  const handleNavigationConfirm = () => {
+    setShowNavigationWarning(false);
+    setHasUnsavedProgress(false);
+    if (pendingNavigation) {
+      pendingNavigation();
+      setPendingNavigation(null);
+    }
+  };
+
+  const handleNavigationCancel = () => {
+    setShowNavigationWarning(false);
+    setPendingNavigation(null);
+  };
+
   const renderCurrentStep = () => {
     if (isLoading) {
       return (
@@ -176,7 +435,7 @@ export function ChatbotFlow({ document, onBack }: ChatbotFlowProps) {
               Please upload a document (PDF, PPT, DOCX, TXT) to get started.
             </p>
             <Button
-              onClick={generateCaseTitles}
+              onClick={() => generateCaseTitles()}
               className="bg-blue-600 hover:bg-blue-700"
             >
               Generate Cases
@@ -223,25 +482,27 @@ export function ChatbotFlow({ document, onBack }: ChatbotFlowProps) {
                 </h3>
                 <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
                   <button
-                    onClick={handleGenerateMCQs}
+                    onClick={() => handleGenerateMCQs()}
                     className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg"
                   >
                     [A] Generate MCQs
                   </button>
                   <button
-                    onClick={handleIdentifyConcepts}
+                    onClick={() => handleIdentifyConcepts()}
                     className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg"
                   >
                     [B] Identify Concepts
                   </button>
                   <button
-                    onClick={() => handleExploreCase()}
+                    onClick={() =>
+                      handleNavigationAttempt(() => handleExploreCase())
+                    }
                     className="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-lg"
                   >
                     [C] Explore Case
                   </button>
                   <button
-                    onClick={handleStartOver}
+                    onClick={() => handleNavigationAttempt(handleStartOver)}
                     className="border border-gray-300 text-gray-700 hover:bg-gray-50 px-4 py-2 rounded-lg"
                   >
                     [D] Start Over
@@ -263,7 +524,7 @@ export function ChatbotFlow({ document, onBack }: ChatbotFlowProps) {
             </p>
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 max-w-2xl mx-auto">
               <Button
-                onClick={handleGenerateMCQs}
+                onClick={() => handleGenerateMCQs()}
                 className="bg-blue-600 hover:bg-blue-700 text-white p-6 h-auto flex flex-col gap-2"
               >
                 <span className="text-lg">📝</span>
@@ -271,7 +532,7 @@ export function ChatbotFlow({ document, onBack }: ChatbotFlowProps) {
                 <span className="text-sm opacity-90">Test your knowledge</span>
               </Button>
               <Button
-                onClick={handleIdentifyConcepts}
+                onClick={() => handleIdentifyConcepts()}
                 className="bg-green-600 hover:bg-green-700 text-white p-6 h-auto flex flex-col gap-2"
               >
                 <span className="text-lg">🧠</span>
@@ -279,7 +540,7 @@ export function ChatbotFlow({ document, onBack }: ChatbotFlowProps) {
                 <span className="text-sm opacity-90">Key learning points</span>
               </Button>
               <Button
-                onClick={handleExploreCase}
+                onClick={() => handleNavigationAttempt(handleExploreCase)}
                 className="bg-purple-600 hover:bg-purple-700 text-white p-6 h-auto flex flex-col gap-2"
               >
                 <span className="text-lg">💬</span>
@@ -289,7 +550,7 @@ export function ChatbotFlow({ document, onBack }: ChatbotFlowProps) {
             </div>
             <div className="mt-6">
               <Button
-                onClick={handleStartOver}
+                onClick={() => handleNavigationAttempt(handleStartOver)}
                 variant="outline"
                 className="border-gray-300 text-gray-700"
               >
@@ -316,6 +577,8 @@ export function ChatbotFlow({ document, onBack }: ChatbotFlowProps) {
               questions={mcqQuestions}
               expandedQuestions={expandedQuestions}
               onToggleQuestion={toggleQuestion}
+              onAllQuestionsCompleted={handleMCQCompletion}
+              onQuestionAttempted={handleQuestionAttempted}
             />
 
             <div className="bg-gray-50 rounded-lg p-6">
@@ -324,25 +587,27 @@ export function ChatbotFlow({ document, onBack }: ChatbotFlowProps) {
               </h3>
               <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
                 <button
-                  onClick={handleGenerateMCQs}
+                  onClick={() => handleGenerateMCQs()}
                   className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg"
                 >
                   Generate More MCQs
                 </button>
                 <button
-                  onClick={handleIdentifyConcepts}
+                  onClick={() =>
+                    handleNavigationAttempt(() => handleIdentifyConcepts())
+                  }
                   className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg"
                 >
                   Identify Concepts
                 </button>
                 <button
-                  onClick={handleExploreCase}
+                  onClick={() => handleNavigationAttempt(handleExploreCase)}
                   className="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-lg"
                 >
                   Explore Case
                 </button>
                 <button
-                  onClick={handleStartOver}
+                  onClick={() => handleNavigationAttempt(handleStartOver)}
                   className="border border-gray-300 text-gray-700 hover:bg-gray-50 px-4 py-2 rounded-lg"
                 >
                   Select Different Case
@@ -370,7 +635,13 @@ export function ChatbotFlow({ document, onBack }: ChatbotFlowProps) {
               </p>
             </div>
 
-            <ConceptsList concepts={conceptStrings} />
+            <ConceptsList
+              concepts={conceptStrings}
+              onConceptSelect={(concept) => {
+                console.log("Selected concept:", concept);
+                // You can add navigation logic here if needed
+              }}
+            />
 
             <div className="bg-gray-50 rounded-lg p-6">
               <h3 className="font-semibold text-gray-900 mb-4">
@@ -378,19 +649,19 @@ export function ChatbotFlow({ document, onBack }: ChatbotFlowProps) {
               </h3>
               <div className="grid gap-3 sm:grid-cols-3">
                 <button
-                  onClick={handleGenerateMCQs}
+                  onClick={() => handleGenerateMCQs()}
                   className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg"
                 >
                   Generate MCQs
                 </button>
                 <button
-                  onClick={handleExploreCase}
+                  onClick={() => handleNavigationAttempt(handleExploreCase)}
                   className="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-lg"
                 >
                   Explore Case
                 </button>
                 <button
-                  onClick={handleStartOver}
+                  onClick={() => handleNavigationAttempt(handleStartOver)}
                   className="border border-gray-300 text-gray-700 hover:bg-gray-50 px-4 py-2 rounded-lg"
                 >
                   Select Different Case
@@ -409,20 +680,26 @@ export function ChatbotFlow({ document, onBack }: ChatbotFlowProps) {
               </h2>
               <div className="flex gap-2">
                 <Button
-                  onClick={handleGenerateMCQs}
+                  onClick={() => handleGenerateMCQs()}
                   variant="outline"
                   size="sm"
                 >
                   Generate MCQs
                 </Button>
                 <Button
-                  onClick={handleIdentifyConcepts}
+                  onClick={() =>
+                    handleNavigationAttempt(() => handleIdentifyConcepts())
+                  }
                   variant="outline"
                   size="sm"
                 >
                   Identify Concepts
                 </Button>
-                <Button onClick={handleStartOver} variant="outline" size="sm">
+                <Button
+                  onClick={() => handleNavigationAttempt(handleStartOver)}
+                  variant="outline"
+                  size="sm"
+                >
                   Select Different Case
                 </Button>
               </div>
@@ -478,6 +755,23 @@ export function ChatbotFlow({ document, onBack }: ChatbotFlowProps) {
       <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
         {renderCurrentStep()}
       </div>
+
+      {/* MCQ Completion Popup */}
+      <MCQCompletionPopup
+        isOpen={showCompletionPopup}
+        correctAnswers={completionStats.correct}
+        totalQuestions={completionStats.total}
+        onClose={handleCompletionPopupClose}
+        onContinue={handleCompletionPopupContinue}
+      />
+
+      {/* Navigation Warning Popup */}
+      <NavigationWarningPopup
+        isOpen={showNavigationWarning}
+        onClose={handleNavigationCancel}
+        onConfirm={handleNavigationConfirm}
+        onCancel={handleNavigationCancel}
+      />
     </div>
   );
 }

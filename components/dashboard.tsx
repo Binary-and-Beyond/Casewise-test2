@@ -1,5 +1,5 @@
 "use client";
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import Image from "next/image";
 
 import { Sidebar } from "@/components/layout/sidebar";
@@ -20,6 +20,8 @@ import { AIChat } from "@/components/widgets/ai-chat";
 import { ConnectionTest } from "@/components/widgets/connection-test";
 import { ChatbotFlow } from "@/components/widgets/chatbot-flow";
 import { ScrollToTop } from "@/components/widgets/scroll-to-top";
+import { MCQCompletionPopup } from "@/components/widgets/mcq-completion-popup";
+import { NavigationWarningPopup } from "@/components/widgets/navigation-warning-popup";
 import { useAuth } from "@/lib/auth-context";
 import {
   apiService,
@@ -61,20 +63,54 @@ export function Dashboard({}: DashboardProps) {
     | "notifications"
     | "chatbot-flow"
   >(() => {
-    // Always start at main view for consistency
-    // Clear any saved view to ensure users always start at welcome page
+    // Load saved view from localStorage, default to main if none exists
     if (typeof window !== "undefined") {
-      localStorage.removeItem("current_view");
-      localStorage.removeItem("selected_case");
+      const savedView = localStorage.getItem("current_view");
+      if (
+        savedView &&
+        [
+          "main",
+          "admin-analytics",
+          "generate-cases",
+          "case-selection",
+          "generate-mcqs",
+          "explore-cases",
+          "identify-concepts",
+          "concept-detail",
+          "profile-settings",
+          "notifications",
+          "chatbot-flow",
+        ].includes(savedView)
+      ) {
+        console.log("🚀 Restoring saved view:", savedView);
+        return savedView as any;
+      }
     }
     return "main";
   });
   const [selectedCase, setSelectedCase] = useState<string>(() => {
-    // Always start with no selected case for consistency
+    // Load saved selected case from localStorage
+    if (typeof window !== "undefined") {
+      const savedCase = localStorage.getItem("selected_case");
+      if (savedCase) {
+        console.log("🚀 Restoring saved case:", savedCase);
+        return savedCase;
+      }
+    }
     return "";
   });
 
-  const [selectedConcept, setSelectedConcept] = useState<string>("");
+  const [selectedConcept, setSelectedConcept] = useState<string>(() => {
+    // Load saved selected concept from localStorage
+    if (typeof window !== "undefined") {
+      const savedConcept = localStorage.getItem("selected_concept");
+      if (savedConcept) {
+        console.log("🚀 Restoring saved concept:", savedConcept);
+        return savedConcept;
+      }
+    }
+    return "";
+  });
   const [activeChat, setActiveChat] = useState<string>(() => {
     if (typeof window !== "undefined") {
       return localStorage.getItem("active_chat") || "";
@@ -85,14 +121,8 @@ export function Dashboard({}: DashboardProps) {
   // State for context-specific chats
   const [contextChats, setContextChats] = useState<Record<string, string>>({});
 
-  // Ensure users always start at main view when component mounts
+  // Test API connection for debugging (only on first mount)
   useEffect(() => {
-    // Reset to main view when component first mounts (after login/signup)
-    setCurrentView("main");
-    setSelectedCase("");
-    setSelectedConcept("");
-
-    // Test API connection for debugging
     const testAPI = async () => {
       console.log("🔍 Testing API connection on component mount...");
       try {
@@ -111,7 +141,25 @@ export function Dashboard({}: DashboardProps) {
   const [uploadError, setUploadError] = useState("");
   const [isAutoLoading, setIsAutoLoading] = useState(false);
   const [autoLoadingProgress, setAutoLoadingProgress] = useState("");
-  const [generatedCases, setGeneratedCases] = useState<CaseScenario[]>([]);
+  const [generatedCases, setGeneratedCases] = useState<CaseScenario[]>(() => {
+    if (typeof window !== "undefined") {
+      try {
+        const cachedCases = localStorage.getItem("generated_cases");
+        if (cachedCases) {
+          const parsedCases = JSON.parse(cachedCases);
+          console.log(
+            "🚀 Initializing generated cases from localStorage:",
+            parsedCases.length,
+            "cases"
+          );
+          return parsedCases;
+        }
+      } catch (e) {
+        console.log("❌ Failed to parse cached generated cases on init:", e);
+      }
+    }
+    return [];
+  });
   const [chats, setChats] = useState<Chat[]>(() => {
     if (typeof window !== "undefined") {
       try {
@@ -139,13 +187,61 @@ export function Dashboard({}: DashboardProps) {
   );
   const [mcqQuestions, setMCQQuestions] = useState<
     Record<string, MCQQuestion[]>
-  >({});
+  >(() => {
+    if (typeof window !== "undefined") {
+      try {
+        const cachedMCQs = localStorage.getItem("mcq_questions");
+        if (cachedMCQs) {
+          const parsedMCQs = JSON.parse(cachedMCQs);
+          console.log(
+            "🚀 Initializing MCQ questions from localStorage:",
+            Object.keys(parsedMCQs).length,
+            "cases"
+          );
+          return parsedMCQs;
+        }
+      } catch (e) {
+        console.log("❌ Failed to parse cached MCQ questions on init:", e);
+      }
+    }
+    return {};
+  });
   const [generatedConcepts, setGeneratedConcepts] = useState<
     Record<string, string[]>
-  >({});
+  >(() => {
+    if (typeof window !== "undefined") {
+      try {
+        const cachedConcepts = localStorage.getItem("generated_concepts");
+        if (cachedConcepts) {
+          const parsedConcepts = JSON.parse(cachedConcepts);
+          console.log(
+            "🚀 Initializing concepts from localStorage:",
+            Object.keys(parsedConcepts).length,
+            "cases"
+          );
+          return parsedConcepts;
+        }
+      } catch (e) {
+        console.log("❌ Failed to parse cached concepts on init:", e);
+      }
+    }
+    return {};
+  });
   const [isGeneratingConcepts, setIsGeneratingConcepts] = useState(false);
   const [isGeneratingMCQs, setIsGeneratingMCQs] = useState<string | null>(null);
   const conceptGenerationRef = useRef<boolean>(false);
+
+  // MCQ completion and navigation warning states
+  const [showCompletionPopup, setShowCompletionPopup] = useState(false);
+  const [completionStats, setCompletionStats] = useState({
+    correct: 0,
+    total: 0,
+  });
+  const [showNavigationWarning, setShowNavigationWarning] = useState(false);
+  const [pendingNavigation, setPendingNavigation] = useState<
+    (() => void) | null
+  >(null);
+  const [hasUnsavedProgress, setHasUnsavedProgress] = useState(false);
 
   // Ensure a case is selected when in explore-cases view
   useEffect(() => {
@@ -918,6 +1014,75 @@ export function Dashboard({}: DashboardProps) {
     }
   }, [activeChat]);
 
+  // Persist MCQ questions to localStorage whenever they change
+  useEffect(() => {
+    if (typeof window !== "undefined" && Object.keys(mcqQuestions).length > 0) {
+      try {
+        localStorage.setItem("mcq_questions", JSON.stringify(mcqQuestions));
+        console.log(
+          "💾 Saved MCQ questions to localStorage:",
+          Object.keys(mcqQuestions).length,
+          "cases"
+        );
+      } catch (e) {
+        console.log("❌ Failed to save MCQ questions to localStorage:", e);
+      }
+    }
+  }, [mcqQuestions]);
+
+  // Persist generated concepts to localStorage whenever they change
+  useEffect(() => {
+    if (
+      typeof window !== "undefined" &&
+      Object.keys(generatedConcepts).length > 0
+    ) {
+      try {
+        localStorage.setItem(
+          "generated_concepts",
+          JSON.stringify(generatedConcepts)
+        );
+        console.log(
+          "💾 Saved concepts to localStorage:",
+          Object.keys(generatedConcepts).length,
+          "cases"
+        );
+      } catch (e) {
+        console.log("❌ Failed to save concepts to localStorage:", e);
+      }
+    }
+  }, [generatedConcepts]);
+
+  // Persist generated cases to localStorage whenever they change
+  useEffect(() => {
+    if (typeof window !== "undefined" && generatedCases.length > 0) {
+      try {
+        localStorage.setItem("generated_cases", JSON.stringify(generatedCases));
+        console.log(
+          "💾 Saved generated cases to localStorage:",
+          generatedCases.length,
+          "cases"
+        );
+      } catch (e) {
+        console.log("❌ Failed to save generated cases to localStorage:", e);
+      }
+    }
+  }, [generatedCases]);
+
+  // Persist selected concept to localStorage whenever it changes
+  useEffect(() => {
+    if (typeof window !== "undefined" && selectedConcept) {
+      try {
+        localStorage.setItem("selected_concept", selectedConcept);
+        console.log(
+          "💾 Saved selected concept to localStorage:",
+          selectedConcept
+        );
+      } catch (e) {
+        console.log("❌ Failed to save selected concept to localStorage:", e);
+      }
+    }
+  }, [selectedConcept]);
+
   // Use generated cases if available, otherwise fallback to default cases
   const defaultCases = [
     {
@@ -1215,6 +1380,18 @@ export function Dashboard({}: DashboardProps) {
       return;
     }
 
+    // Check if we have unsaved progress before switching chats
+    if (hasUnsavedProgress) {
+      handleNavigationAttempt(async () => {
+        await performChatSwitch(chatId);
+      });
+      return;
+    }
+
+    await performChatSwitch(chatId);
+  };
+
+  const performChatSwitch = async (chatId: string) => {
     setActiveChat(chatId);
     localStorage.setItem("active_chat", chatId);
     setCurrentView("main");
@@ -1608,11 +1785,36 @@ export function Dashboard({}: DashboardProps) {
     }
   };
 
-  const generateMCQsFromDocument = async () => {
+  const generateMCQsFromDocument = async (retryCount = 0) => {
     const currentDocument = getCurrentChatDocument();
     if (!currentDocument) {
       setUploadError("No document available for MCQ generation");
       return;
+    }
+
+    // Check if MCQs already exist for this case
+    if (
+      selectedCase &&
+      mcqQuestions[selectedCase] &&
+      mcqQuestions[selectedCase].length > 0
+    ) {
+      const hasHints = mcqQuestions[selectedCase].some(
+        (q) => q.hint && q.hint.trim() !== ""
+      );
+      if (hasHints) {
+        console.log(
+          "🚀 MCQs with hints already exist for case:",
+          selectedCase,
+          "skipping generation"
+        );
+        return;
+      } else {
+        console.log(
+          "🔄 MCQs exist but without hints for case:",
+          selectedCase,
+          "regenerating with hints"
+        );
+      }
     }
 
     try {
@@ -1623,7 +1825,8 @@ export function Dashboard({}: DashboardProps) {
       const response = await apiService.generateMCQs(
         currentDocument.id,
         undefined,
-        5
+        5,
+        true // Include hints
       );
 
       // Update the MCQ questions state with full objects for the selected case
@@ -1641,19 +1844,44 @@ export function Dashboard({}: DashboardProps) {
         console.log("No case selected for MCQ generation");
       }
     } catch (error) {
-      setUploadError(
-        error instanceof Error ? error.message : "Failed to generate MCQs"
-      );
+      const errorMessage =
+        error instanceof Error ? error.message : "Failed to generate MCQs";
       console.error("MCQ generation error:", error);
+
+      // Retry logic - retry up to 2 times
+      if (retryCount < 2) {
+        console.log(
+          `🔄 Retrying MCQ generation (attempt ${retryCount + 1}/2)...`
+        );
+        setTimeout(() => {
+          generateMCQsFromDocument(retryCount + 1);
+        }, 2000); // Wait 2 seconds before retry
+      } else {
+        setUploadError(`${errorMessage} (Failed after 3 attempts)`);
+      }
     } finally {
       setIsUploading(false);
     }
   };
 
-  const generateConceptsFromDocument = async () => {
+  const generateConceptsFromDocument = async (retryCount = 0) => {
     const currentDocument = getCurrentChatDocument();
     if (!currentDocument) {
       setUploadError("No document available for concept generation");
+      return;
+    }
+
+    // Check if concepts already exist for this case
+    if (
+      selectedCase &&
+      generatedConcepts[selectedCase] &&
+      generatedConcepts[selectedCase].length > 0
+    ) {
+      console.log(
+        "🚀 Concepts already exist for case:",
+        selectedCase,
+        "skipping generation"
+      );
       return;
     }
 
@@ -1689,17 +1917,28 @@ export function Dashboard({}: DashboardProps) {
 
       console.log("Concepts generated successfully:", response);
     } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : "Unknown error";
       console.error("Concept generation error:", error);
       console.error("Error details:", {
-        message: error instanceof Error ? error.message : "Unknown error",
+        message: errorMessage,
         stack: error instanceof Error ? error.stack : undefined,
         currentDocument: currentDocument?.id,
       });
-      setUploadError(
-        `Failed to generate concepts: ${
-          error instanceof Error ? error.message : "Unknown error"
-        }`
-      );
+
+      // Retry logic - retry up to 2 times
+      if (retryCount < 2) {
+        console.log(
+          `🔄 Retrying concept generation (attempt ${retryCount + 1}/2)...`
+        );
+        setTimeout(() => {
+          generateConceptsFromDocument(retryCount + 1);
+        }, 2000); // Wait 2 seconds before retry
+      } else {
+        setUploadError(
+          `Failed to generate concepts: ${errorMessage} (Failed after 3 attempts)`
+        );
+      }
     } finally {
       setIsUploading(false);
     }
@@ -1966,11 +2205,20 @@ export function Dashboard({}: DashboardProps) {
       | "notifications"
       | "chatbot-flow"
   ) => {
-    // Clear any error messages when changing views
-    setUploadError("");
-    setCurrentView(view);
-    // Save current view to localStorage
-    localStorage.setItem("current_view", view);
+    // Check if we're currently in MCQ view and have unsaved progress
+    if (currentView === "explore-cases" && hasUnsavedProgress) {
+      handleNavigationAttempt(() => {
+        setUploadError("");
+        setCurrentView(view);
+        localStorage.setItem("current_view", view);
+      });
+    } else {
+      // Clear any error messages when changing views
+      setUploadError("");
+      setCurrentView(view);
+      // Save current view to localStorage
+      localStorage.setItem("current_view", view);
+    }
   };
 
   const setCurrentViewWithPersistence = (
@@ -1998,7 +2246,58 @@ export function Dashboard({}: DashboardProps) {
 
   const handleConceptSelect = (concept: string) => {
     setSelectedConcept(concept);
+    localStorage.setItem("selected_concept", concept);
     setCurrentViewWithPersistence("concept-detail");
+  };
+
+  // MCQ completion handlers
+  const handleMCQCompletion = useCallback(
+    (correctAnswers: number, totalQuestions: number) => {
+      setCompletionStats({ correct: correctAnswers, total: totalQuestions });
+      setShowCompletionPopup(true);
+      setHasUnsavedProgress(false); // Progress is now saved/completed
+    },
+    []
+  );
+
+  const handleCompletionPopupClose = () => {
+    console.log("🔄 Closing completion popup");
+    setShowCompletionPopup(false);
+  };
+
+  const handleCompletionPopupContinue = () => {
+    console.log("🔄 Finishing completion popup");
+    setShowCompletionPopup(false);
+    // Could navigate to next section or show summary
+  };
+
+  // Navigation warning handlers
+  const handleNavigationAttempt = (navigationFunction: () => void) => {
+    if (hasUnsavedProgress) {
+      setPendingNavigation(() => navigationFunction);
+      setShowNavigationWarning(true);
+    } else {
+      navigationFunction();
+    }
+  };
+
+  const handleNavigationConfirm = () => {
+    setShowNavigationWarning(false);
+    setHasUnsavedProgress(false);
+    if (pendingNavigation) {
+      pendingNavigation();
+      setPendingNavigation(null);
+    }
+  };
+
+  const handleNavigationCancel = () => {
+    setShowNavigationWarning(false);
+    setPendingNavigation(null);
+  };
+
+  // Track when user starts answering questions
+  const handleQuestionAttempted = () => {
+    setHasUnsavedProgress(true);
   };
 
   const renderAdminAnalytics = () => (
@@ -2276,22 +2575,6 @@ export function Dashboard({}: DashboardProps) {
                 <span className="bg-yellow-100 text-yellow-800 px-2 py-1 rounded text-xs font-medium">
                   Moderate
                 </span>
-                <div className="text-gray-400 flex items-center justify-center w-4 h-4">
-                  <svg
-                    className="w-3 h-3"
-                    fill="none"
-                    stroke="currentColor"
-                    viewBox="0 0 24 24"
-                    xmlns="http://www.w3.org/2000/svg"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M19 9l-7 7-7-7"
-                    />
-                  </svg>
-                </div>
               </div>
             </div>
             <div className="text-right">
@@ -2335,7 +2618,7 @@ export function Dashboard({}: DashboardProps) {
                 {selectedCase || "MCQ Questions"}
               </h1>
               <span className="bg-yellow-100 text-yellow-800 px-2 py-1 rounded text-xs font-medium">
-                Moderate ⌄
+                Moderate
               </span>
             </div>
             <div className="text-right">
@@ -2361,6 +2644,8 @@ export function Dashboard({}: DashboardProps) {
             questions={mcqQuestions[selectedCase]}
             expandedQuestions={expandedQuestions}
             onToggleQuestion={toggleQuestion}
+            onAllQuestionsCompleted={handleMCQCompletion}
+            onQuestionAttempted={handleQuestionAttempted}
           />
         ) : isGeneratingMCQs === selectedCase ? (
           <div className="space-y-4">
@@ -2426,7 +2711,7 @@ export function Dashboard({}: DashboardProps) {
                 {selectedCase || "Chest Pain in a Middle-Aged Man"}
               </h1>
               <span className="bg-yellow-100 text-yellow-800 px-2 py-1 rounded text-xs font-medium">
-                Moderate ⌄
+                Moderate
               </span>
             </div>
             <div className="text-right">
@@ -2507,7 +2792,7 @@ export function Dashboard({}: DashboardProps) {
                 {selectedCase || "Key Concepts"}
               </h1>
               <span className="bg-yellow-100 text-yellow-800 px-2 py-1 rounded text-xs font-medium">
-                Moderate ⌄
+                Moderate
               </span>
             </div>
             <div className="text-right">
@@ -2590,7 +2875,7 @@ export function Dashboard({}: DashboardProps) {
                 {selectedCase || "Key Concepts"}
               </h1>
               <span className="bg-yellow-100 text-yellow-800 px-2 py-1 rounded text-xs font-medium">
-                Moderate ⌄
+                Moderate
               </span>
             </div>
             <div className="text-right">
@@ -2729,6 +3014,23 @@ export function Dashboard({}: DashboardProps) {
 
       {/* Scroll to Top Button */}
       <ScrollToTop />
+
+      {/* MCQ Completion Popup */}
+      <MCQCompletionPopup
+        isOpen={showCompletionPopup}
+        correctAnswers={completionStats.correct}
+        totalQuestions={completionStats.total}
+        onClose={handleCompletionPopupClose}
+        onContinue={handleCompletionPopupContinue}
+      />
+
+      {/* Navigation Warning Popup */}
+      <NavigationWarningPopup
+        isOpen={showNavigationWarning}
+        onClose={handleNavigationCancel}
+        onConfirm={handleNavigationConfirm}
+        onCancel={handleNavigationCancel}
+      />
     </div>
   );
 }

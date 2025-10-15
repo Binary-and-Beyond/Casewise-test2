@@ -126,6 +126,7 @@ export interface MCQQuestion {
   options: MCQOption[];
   explanation: string;
   difficulty: string;
+  hint?: string;
 }
 
 export interface MCQResponse {
@@ -801,7 +802,8 @@ class ApiService {
   async generateMCQs(
     documentId?: string,
     caseTitle?: string,
-    numQuestions: number = 3
+    numQuestions: number = 3,
+    includeHints: boolean = true
   ): Promise<MCQResponse> {
     const response = await fetch(`${API_BASE_URL}/ai/generate-mcqs`, {
       method: "POST",
@@ -812,6 +814,7 @@ class ApiService {
         document_id: documentId,
         case_title: caseTitle,
         num_questions: numQuestions,
+        include_hints: includeHints,
       }),
     });
     return this.handleResponse<MCQResponse>(response);

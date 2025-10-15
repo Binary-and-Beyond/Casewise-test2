@@ -12,6 +12,7 @@ interface MCQQuestionData {
   options: MCQOption[];
   explanation: string;
   difficulty: string;
+  hint?: string;
 }
 
 interface InteractiveMCQQuestionProps {
@@ -19,6 +20,8 @@ interface InteractiveMCQQuestionProps {
   index: number;
   isExpanded: boolean;
   onToggle: () => void;
+  onQuestionCompleted?: (questionId: string, isCorrect: boolean) => void;
+  onQuestionAttempted?: () => void;
 }
 
 export function InteractiveMCQQuestion({
@@ -26,6 +29,8 @@ export function InteractiveMCQQuestion({
   index,
   isExpanded,
   onToggle,
+  onQuestionCompleted,
+  onQuestionAttempted,
 }: InteractiveMCQQuestionProps) {
   const [selectedOption, setSelectedOption] = useState<string | null>(null);
   const [showExplanation, setShowExplanation] = useState(false);
@@ -34,9 +39,16 @@ export function InteractiveMCQQuestion({
   const [showHint, setShowHint] = useState(false);
   const [showAnswer, setShowAnswer] = useState(false);
   const [previousAnswers, setPreviousAnswers] = useState<string[]>([]);
+  const [isCompleted, setIsCompleted] = useState(false);
 
   const handleOptionSelect = (optionId: string) => {
-    if (hasAnswered && attempts >= 3) return; // Prevent changing answer after 3 attempts
+    // Prevent any further attempts if question is already completed
+    if (isCompleted) return;
+
+    // Notify parent that user has started attempting this question
+    if (attempts === 0) {
+      onQuestionAttempted?.();
+    }
 
     setSelectedOption(optionId);
     setAttempts((prev) => prev + 1);
@@ -49,11 +61,17 @@ export function InteractiveMCQQuestion({
     if (isCorrect) {
       setHasAnswered(true);
       setShowExplanation(false);
+      setIsCompleted(true);
+      // Notify parent that question is completed correctly
+      onQuestionCompleted?.(question.id, true);
     } else if (attempts + 1 >= 3) {
       // After 3 attempts, automatically show the explanation
       setHasAnswered(true);
       setShowAnswer(true);
       setShowExplanation(true); // Automatically show explanation
+      setIsCompleted(true);
+      // Notify parent that question is completed after 3 attempts
+      onQuestionCompleted?.(question.id, false);
     } else {
       // Show hint after first attempt
       setShowHint(true);
@@ -72,6 +90,7 @@ export function InteractiveMCQQuestion({
     setShowHint(false);
     setShowAnswer(false);
     setPreviousAnswers([]);
+    setIsCompleted(false);
   };
 
   const getOptionStyle = (option: MCQOption, optionIndex: number) => {
@@ -106,8 +125,21 @@ export function InteractiveMCQQuestion({
     selectedOption &&
     question.options.find((opt) => opt.id === selectedOption)?.is_correct;
 
+  // Determine background color based on completion status
+  const getBackgroundColor = () => {
+    if (isCompleted) {
+      const isCorrect =
+        selectedOption &&
+        question.options.find((opt) => opt.id === selectedOption)?.is_correct;
+      return isCorrect ? "bg-green-100" : "bg-red-100";
+    }
+    return "bg-white";
+  };
+
   return (
-    <div className="bg-white border border-gray-200 rounded-lg p-4 hover:shadow-sm">
+    <div
+      className={`${getBackgroundColor()} border border-gray-200 rounded-lg p-4 hover:shadow-sm transition-colors`}
+    >
       <div
         className="flex items-center justify-between cursor-pointer"
         onClick={onToggle}
@@ -115,26 +147,6 @@ export function InteractiveMCQQuestion({
         <span className="font-medium text-gray-900">
           {index + 1}) {question.question}
         </span>
-        <div
-          className={`text-gray-400 transition-transform duration-200 flex items-center justify-center w-6 h-6 ${
-            isExpanded ? "rotate-180" : ""
-          }`}
-        >
-          <svg
-            className="w-5 h-5"
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
-            xmlns="http://www.w3.org/2000/svg"
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M19 9l-7 7-7-7"
-            />
-          </svg>
-        </div>
       </div>
 
       {isExpanded && (
@@ -147,6 +159,10 @@ export function InteractiveMCQQuestion({
                   key={option.id}
                   className={getOptionStyle(option, optionIndex)}
                   onClick={() => {
+                    // Don't allow clicking if question is completed
+                    if (isCompleted) {
+                      return;
+                    }
                     // Don't allow clicking on previously attempted wrong answers
                     if (
                       previousAnswers.includes(option.id) &&
@@ -206,9 +222,8 @@ export function InteractiveMCQQuestion({
                   <span className="text-yellow-600 text-lg mr-2">💡</span>
                   <span className="font-medium text-yellow-800">
                     Hint:{" "}
-                    {attempts === 1
-                      ? "Think about the key concepts in the question."
-                      : "Consider the most logical answer based on medical knowledge."}
+                    {question.hint ||
+                      "Think about the key concepts in the question."}
                   </span>
                 </div>
               </div>

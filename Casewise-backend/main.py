@@ -412,6 +412,7 @@ class MCQRequest(BaseModel):
     case_id: Optional[str] = None
     case_title: Optional[str] = None
     num_questions: int = Field(default=3, ge=1, le=10)
+    include_hints: bool = Field(default=True)
 
 class MCQOption(BaseModel):
     """MCQ option schema"""
@@ -426,6 +427,7 @@ class MCQQuestion(BaseModel):
     options: List[MCQOption]
     explanation: str
     difficulty: str
+    hint: Optional[str] = None
 
 class MCQResponse(BaseModel):
     """MCQ response schema"""
@@ -1973,6 +1975,13 @@ async def generate_mcqs(
         if request.case_title:
             case_context = f"\n\nSpecific Case Focus: {request.case_title}\nGenerate MCQs specifically related to this case scenario."
         
+        # Build hint instruction based on request
+        hint_instruction = ""
+        hint_field = ""
+        if request.include_hints:
+            hint_instruction = "\n        - Include helpful hints that guide students toward the correct answer without giving it away"
+            hint_field = ',\n                "hint": "Helpful hint that guides toward the correct answer without revealing it"'
+        
         system_prompt = f"""
         You are an expert medical educator creating MCQ questions. Based on the following content, generate {request.num_questions} high-quality multiple-choice questions.{case_context}
 
@@ -1986,7 +1995,7 @@ async def generate_mcqs(
         - Include detailed explanations for the correct answer
         - Assign appropriate difficulty levels (Easy, Moderate, Hard)
         - Focus on key medical concepts, diagnosis, treatment, and pathophysiology
-        - Make distractors plausible but clearly incorrect
+        - Make distractors plausible but clearly incorrect{hint_instruction}
 
         CRITICAL: You must respond with ONLY a valid JSON array. Do not include any markdown formatting, explanations, or additional text. Start your response directly with [ and end with ].
 
@@ -2003,7 +2012,7 @@ async def generate_mcqs(
                     {{"id": "E", "text": "Option E text", "is_correct": false}}
                 ],
                 "explanation": "Detailed explanation of why the correct answer is correct and why others are wrong.",
-                "difficulty": "Easy/Moderate/Hard"
+                "difficulty": "Easy/Moderate/Hard"{hint_field}
             }}
         ]
         """

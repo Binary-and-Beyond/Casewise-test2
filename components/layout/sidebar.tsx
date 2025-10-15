@@ -144,12 +144,6 @@ export function Sidebar({
             >
               + New
             </button>
-            <button
-              onClick={() => setSidebarExpanded(!sidebarExpanded)}
-              className="text-gray-400 hover:text-gray-600"
-            >
-              {sidebarExpanded ? "−" : "+"}
-            </button>
           </div>
         </div>
 
