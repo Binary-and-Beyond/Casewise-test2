@@ -26,6 +26,11 @@ from google.oauth2 import id_token
 from google.auth.transport import requests
 import time
 from collections import defaultdict, deque
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+import secrets
+import string
 # Try to import PDF processing libraries
 PDF_AVAILABLE = False
 PDF_LIBRARY = None
@@ -337,6 +342,15 @@ class PasswordChangeRequest(BaseModel):
     current_password: str
     new_password: str = Field(..., min_length=6)
 
+class ForgotPasswordRequest(BaseModel):
+    """Forgot password request schema"""
+    email: EmailStr
+
+class ResetPasswordRequest(BaseModel):
+    """Reset password request schema"""
+    token: str
+    new_password: str = Field(..., min_length=8)
+
 class Notification(BaseModel):
     """Notification schema"""
     id: str
@@ -557,6 +571,86 @@ def create_notification(user_id: str, notification_type: str, title: str, messag
     except Exception as e:
         print(f" Error creating notification: {e}")
         return None
+
+def send_reset_password_email(email: str, reset_token: str, user_name: str = None):
+    """Send password reset email to user"""
+    try:
+        # Email configuration - you should set these in your environment variables
+        smtp_server = os.getenv("SMTP_SERVER", "smtp.gmail.com")
+        smtp_port = int(os.getenv("SMTP_PORT", "587"))
+        smtp_username = os.getenv("SMTP_USERNAME", "")
+        smtp_password = os.getenv("SMTP_PASSWORD", "")
+        
+        if not smtp_username or not smtp_password:
+            print("❌ SMTP credentials not configured. Please set SMTP_USERNAME and SMTP_PASSWORD environment variables.")
+            return False
+        
+        # Create message
+        msg = MIMEMultipart()
+        msg['From'] = smtp_username
+        msg['To'] = email
+        msg['Subject'] = "Password Reset Request - CaseWise"
+        
+        # Create reset link
+        frontend_url = os.getenv("FRONTEND_URL", "http://localhost:3000")
+        reset_link = f"{frontend_url}/reset-password?token={reset_token}"
+        
+        # Email body
+        body = f"""
+        <html>
+        <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
+            <div style="max-width: 600px; margin: 0 auto; padding: 20px;">
+                <h2 style="color: #2563eb;">Password Reset Request</h2>
+                
+                <p>Hello {user_name or 'User'},</p>
+                
+                <p>We received a request to reset your password for your CaseWise account. If you made this request, click the button below to reset your password:</p>
+                
+                <div style="text-align: center; margin: 30px 0;">
+                    <a href="{reset_link}" 
+                       style="background-color: #2563eb; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; display: inline-block; font-weight: bold;">
+                        Reset Password
+                    </a>
+                </div>
+                
+                <p>Or copy and paste this link into your browser:</p>
+                <p style="word-break: break-all; background-color: #f3f4f6; padding: 10px; border-radius: 4px;">
+                    {reset_link}
+                </p>
+                
+                <p><strong>This link will expire in 1 hour for security reasons.</strong></p>
+                
+                <p>If you didn't request a password reset, please ignore this email. Your password will remain unchanged.</p>
+                
+                <hr style="border: none; border-top: 1px solid #e5e7eb; margin: 30px 0;">
+                <p style="font-size: 12px; color: #6b7280;">
+                    This email was sent from CaseWise. If you have any questions, please contact our support team.
+                </p>
+            </div>
+        </body>
+        </html>
+        """
+        
+        msg.attach(MIMEText(body, 'html'))
+        
+        # Send email
+        server = smtplib.SMTP(smtp_server, smtp_port)
+        server.starttls()
+        server.login(smtp_username, smtp_password)
+        text = msg.as_string()
+        server.sendmail(smtp_username, email, text)
+        server.quit()
+        
+        print(f"✅ Password reset email sent to: {email}")
+        return True
+        
+    except Exception as e:
+        print(f"❌ Error sending password reset email: {e}")
+        return False
+
+def generate_reset_token():
+    """Generate a secure reset token"""
+    return ''.join(secrets.choice(string.ascii_letters + string.digits) for _ in range(32))
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     """Create JWT access token using simple implementation"""
@@ -988,6 +1082,101 @@ def google_auth(request: GoogleAuthRequest):
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Google authentication error: {str(e)}")
 
+@app.post("/forgot-password")
+async def forgot_password(request: ForgotPasswordRequest):
+    """Send password reset email to user"""
+    print(f"FORGOT_PASSWORD: Request for email: {request.email}")
+    
+    try:
+        # Check if user exists
+        user = db.users.find_one({"email": request.email})
+        if not user:
+            # Don't reveal if email exists or not for security
+            return {"message": "If an account with that email exists, we've sent a password reset link."}
+        
+        # Generate reset token
+        reset_token = generate_reset_token()
+        expires_at = datetime.utcnow() + timedelta(hours=1)  # Token expires in 1 hour
+        
+        # Store reset token in database
+        db.password_reset_tokens.insert_one({
+            "user_id": str(user["_id"]),
+            "email": request.email,
+            "token": reset_token,
+            "expires_at": expires_at,
+            "used": False,
+            "created_at": datetime.utcnow()
+        })
+        
+        # Send email
+        user_name = user.get("full_name") or user.get("first_name", "")
+        email_sent = send_reset_password_email(request.email, reset_token, user_name)
+        
+        if email_sent:
+            print(f"✅ Password reset email sent to: {request.email}")
+            return {"message": "If an account with that email exists, we've sent a password reset link."}
+        else:
+            print(f"❌ Failed to send password reset email to: {request.email}")
+            raise HTTPException(status_code=500, detail="Failed to send password reset email. Please try again later.")
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ FORGOT_PASSWORD: Unexpected error: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail="An error occurred. Please try again later.")
+
+@app.post("/reset-password")
+async def reset_password(request: ResetPasswordRequest):
+    """Reset user password using token"""
+    print(f"RESET_PASSWORD: Request with token: {request.token[:8]}...")
+    
+    try:
+        # Find valid reset token
+        reset_record = db.password_reset_tokens.find_one({
+            "token": request.token,
+            "used": False,
+            "expires_at": {"$gt": datetime.utcnow()}
+        })
+        
+        if not reset_record:
+            raise HTTPException(status_code=400, detail="Invalid or expired reset token.")
+        
+        # Hash new password
+        hashed_password = hashlib.sha256(request.new_password.encode()).hexdigest()
+        
+        # Update user password
+        result = db.users.update_one(
+            {"_id": ObjectId(reset_record["user_id"])},
+            {
+                "$set": {
+                    "hashed_password": hashed_password,
+                    "updated_at": datetime.utcnow()
+                }
+            }
+        )
+        
+        if result.modified_count == 0:
+            raise HTTPException(status_code=404, detail="User not found.")
+        
+        # Mark token as used
+        db.password_reset_tokens.update_one(
+            {"_id": reset_record["_id"]},
+            {"$set": {"used": True, "used_at": datetime.utcnow()}}
+        )
+        
+        print(f"✅ Password reset successful for user: {reset_record['user_id']}")
+        return {"message": "Password has been reset successfully. You can now log in with your new password."}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ RESET_PASSWORD: Unexpected error: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail="An error occurred. Please try again later.")
+
 @app.get("/me", response_model=UserResponse)
 def get_current_user_info(current_user: dict = Depends(get_current_user)):
     user_response = {
@@ -1263,13 +1452,20 @@ async def get_notifications(
         
         notification_list = []
         for notification in notifications:
+            # Convert MongoDB datetime to ISO string
+            created_at = notification["created_at"]
+            if hasattr(created_at, 'isoformat'):
+                created_at_str = created_at.isoformat()
+            else:
+                created_at_str = str(created_at)
+            
             notification_list.append({
                 "id": str(notification["_id"]),
                 "type": notification["type"],
                 "title": notification["title"],
                 "message": notification["message"],
                 "is_read": notification["is_read"],
-                "created_at": notification["created_at"],
+                "created_at": created_at_str,
                 "metadata": notification.get("metadata")
             })
         

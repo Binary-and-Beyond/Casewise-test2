@@ -36,6 +36,23 @@ export interface AuthResponse {
   email: string;
 }
 
+export interface ForgotPasswordRequest {
+  email: string;
+}
+
+export interface ResetPasswordRequest {
+  token: string;
+  new_password: string;
+}
+
+export interface ForgotPasswordResponse {
+  message: string;
+}
+
+export interface ResetPasswordResponse {
+  message: string;
+}
+
 export interface Document {
   id: string;
   filename: string;
@@ -351,6 +368,49 @@ class ApiService {
 
     console.log("Google auth response status:", response.status);
     return this.handleResponse<AuthResponse>(response);
+  }
+
+  async forgotPassword(email: string): Promise<ForgotPasswordResponse> {
+    console.log("🔥 FRONTEND: About to call forgot password");
+    console.log("URL:", `${API_BASE_URL}/forgot-password`);
+    console.log("Email:", email);
+
+    const response = await fetch(`${API_BASE_URL}/forgot-password`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      mode: "cors",
+      credentials: "include",
+      body: JSON.stringify({ email }),
+    });
+
+    console.log("Forgot password response status:", response.status);
+    return this.handleResponse<ForgotPasswordResponse>(response);
+  }
+
+  async resetPassword(
+    token: string,
+    newPassword: string
+  ): Promise<ResetPasswordResponse> {
+    console.log("🔥 FRONTEND: About to call reset password");
+    console.log("URL:", `${API_BASE_URL}/reset-password`);
+    console.log("Token:", token.substring(0, 8) + "...");
+
+    const response = await fetch(`${API_BASE_URL}/reset-password`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      mode: "cors",
+      credentials: "include",
+      body: JSON.stringify({ token, new_password: newPassword }),
+    });
+
+    console.log("Reset password response status:", response.status);
+    return this.handleResponse<ResetPasswordResponse>(response);
   }
 
   async getCurrentUser(): Promise<User> {

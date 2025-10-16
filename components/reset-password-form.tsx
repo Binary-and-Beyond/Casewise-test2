@@ -1,35 +1,54 @@
 "use client";
 
 import type React from "react";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { apiService } from "@/lib/api";
 
-interface ForgotPasswordFormProps {
-  onBackToLoginClick: () => void;
+interface ResetPasswordFormProps {
+  token: string;
+  onSuccess: () => void;
 }
 
-export function ForgotPasswordForm({
-  onBackToLoginClick,
-}: ForgotPasswordFormProps) {
-  const [email, setEmail] = useState("");
+export function ResetPasswordForm({
+  token,
+  onSuccess,
+}: ResetPasswordFormProps) {
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
   const [isLoading, setIsLoading] = useState(false);
-  const [isSuccess, setIsSuccess] = useState(false);
   const [error, setError] = useState("");
+  const [isSuccess, setIsSuccess] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setIsLoading(true);
     setError("");
 
+    // Validate passwords
+    if (newPassword.length < 8) {
+      setError("Password must be at least 8 characters long.");
+      return;
+    }
+
+    if (newPassword !== confirmPassword) {
+      setError("Passwords do not match.");
+      return;
+    }
+
+    setIsLoading(true);
+
     try {
-      await apiService.forgotPassword(email);
+      await apiService.resetPassword(token, newPassword);
       setIsSuccess(true);
+      // Call onSuccess after a short delay to show success message
+      setTimeout(() => {
+        onSuccess();
+      }, 2000);
     } catch (err: any) {
-      console.error("Forgot password error:", err);
-      setError(err.message || "Failed to send reset email. Please try again.");
+      console.error("Reset password error:", err);
+      setError(err.message || "Failed to reset password. Please try again.");
     } finally {
       setIsLoading(false);
     }
@@ -56,18 +75,16 @@ export function ForgotPasswordForm({
               </svg>
             </div>
             <h1 className="text-2xl font-semibold text-gray-900 mb-2">
-              Check Your Email
+              Password Reset Successful
             </h1>
             <p className="text-sm text-gray-600 mb-6">
-              We've sent a password reset link to <strong>{email}</strong>.
-              Please check your email and click the link to reset your password.
+              Your password has been successfully reset. You can now log in with
+              your new password.
             </p>
-            <Button
-              onClick={onBackToLoginClick}
-              className="w-full h-12 bg-gray-700 hover:bg-gray-800 text-white font-medium rounded-md"
-            >
-              Back to Login
-            </Button>
+            <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-600 mx-auto"></div>
+            <p className="text-sm text-gray-500 mt-2">
+              Redirecting to login...
+            </p>
           </div>
         </div>
       </div>
@@ -78,31 +95,12 @@ export function ForgotPasswordForm({
     <div className="fixed inset-0 bg-blue-100 flex items-center justify-center p-4">
       <div className="w-full max-w-md bg-white p-8 rounded-lg shadow-sm">
         <div className="text-center mb-6">
-          <button
-            onClick={onBackToLoginClick}
-            className="flex items-center text-sm text-gray-600 hover:text-gray-800 mb-4 transition-colors"
-          >
-            <svg
-              className="w-4 h-4 mr-2"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M15 19l-7-7 7-7"
-              />
-            </svg>
-            Back to Login
-          </button>
           <h1 className="text-2xl font-semibold text-gray-900 mb-2">
-            Forgotten your password?
+            Reset Your Password
           </h1>
           <p className="text-sm text-gray-600">
-            There is nothing to worry about, we'll send you a message to help
-            you reset your password.
+            Enter your new password below. Make sure it's at least 8 characters
+            long.
           </p>
         </div>
 
@@ -115,20 +113,41 @@ export function ForgotPasswordForm({
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="space-y-2">
             <Label
-              htmlFor="email"
+              htmlFor="newPassword"
               className="text-sm font-medium text-gray-700"
             >
-              Email Address
+              New Password
             </Label>
             <Input
-              id="email"
-              type="email"
-              placeholder="Enter personal or work email address"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
+              id="newPassword"
+              type="password"
+              placeholder="Enter your new password"
+              value={newPassword}
+              onChange={(e) => setNewPassword(e.target.value)}
               className="h-11 bg-gray-100 border-0 rounded-md"
               required
               disabled={isLoading}
+              minLength={8}
+            />
+          </div>
+
+          <div className="space-y-2">
+            <Label
+              htmlFor="confirmPassword"
+              className="text-sm font-medium text-gray-700"
+            >
+              Confirm New Password
+            </Label>
+            <Input
+              id="confirmPassword"
+              type="password"
+              placeholder="Confirm your new password"
+              value={confirmPassword}
+              onChange={(e) => setConfirmPassword(e.target.value)}
+              className="h-11 bg-gray-100 border-0 rounded-md"
+              required
+              disabled={isLoading}
+              minLength={8}
             />
           </div>
 
@@ -140,10 +159,10 @@ export function ForgotPasswordForm({
             {isLoading ? (
               <div className="flex items-center">
                 <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
-                Sending...
+                Resetting...
               </div>
             ) : (
-              "Send Reset Link"
+              "Reset Password"
             )}
           </Button>
         </form>
