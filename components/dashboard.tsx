@@ -1852,9 +1852,6 @@ export function Dashboard({}: DashboardProps) {
   const retryMCQGeneration = async () => {
     if (!selectedCase) return;
 
-    console.log(
-      `🔄 Manually retrying MCQ generation for case: ${selectedCase}`
-    );
     setIsGeneratingMCQs(selectedCase);
     setUploadError("");
 
@@ -1872,35 +1869,20 @@ export function Dashboard({}: DashboardProps) {
         5 // Generate 5 MCQs per case
       );
 
-      console.log(`📊 MCQ response for ${selectedCase}:`, mcqResponse);
-      console.log(`📊 MCQ questions array:`, mcqResponse.questions);
-      console.log(`📊 MCQ questions length:`, mcqResponse.questions?.length);
-
       if (mcqResponse.questions && mcqResponse.questions.length > 0) {
-        setMCQQuestions((prev) => {
-          const newState = {
-            ...prev,
-            [selectedCase]: mcqResponse.questions,
-          };
-          console.log(`📊 Updated MCQ state:`, newState);
-          return newState;
-        });
-        console.log(
-          `✅ Generated ${mcqResponse.questions.length} MCQs for: ${selectedCase}`
-        );
+        setMCQQuestions((prev) => ({
+          ...prev,
+          [selectedCase]: mcqResponse.questions,
+        }));
 
         // Add a small delay to ensure state updates before clearing generating state
         setTimeout(() => {
           setIsGeneratingMCQs(null);
-          console.log(`🔄 Cleared generating state for: ${selectedCase}`);
 
           // Double-check that MCQs are still there after a short delay
           setTimeout(() => {
             const currentMCQs = mcqQuestions[selectedCase];
             if (!currentMCQs || currentMCQs.length === 0) {
-              console.log(
-                `⚠️ MCQs disappeared for ${selectedCase}, trying to restore from localStorage`
-              );
               try {
                 const cachedMCQs = localStorage.getItem("mcq_questions");
                 if (cachedMCQs) {
@@ -1910,9 +1892,6 @@ export function Dashboard({}: DashboardProps) {
                     parsedMCQs[selectedCase].length > 0
                   ) {
                     setMCQQuestions(parsedMCQs);
-                    console.log(
-                      `✅ Restored MCQs for ${selectedCase} from localStorage`
-                    );
                   }
                 }
               } catch (e) {
@@ -2744,28 +2723,9 @@ export function Dashboard({}: DashboardProps) {
           </div>
         </div>
 
-        {(() => {
-          console.log(`🔍 UI Debug - selectedCase:`, selectedCase);
-          console.log(
-            `🔍 UI Debug - mcqQuestions[selectedCase]:`,
-            mcqQuestions[selectedCase]
-          );
-          console.log(
-            `🔍 UI Debug - mcqQuestions[selectedCase]?.length:`,
-            mcqQuestions[selectedCase]?.length
-          );
-          console.log(`🔍 UI Debug - isGeneratingMCQs:`, isGeneratingMCQs);
-          console.log(
-            `🔍 UI Debug - isGeneratingMCQs === selectedCase:`,
-            isGeneratingMCQs === selectedCase
-          );
-
-          return (
-            selectedCase &&
-            mcqQuestions[selectedCase] &&
-            mcqQuestions[selectedCase].length > 0
-          );
-        })() ? (
+        {selectedCase &&
+        mcqQuestions[selectedCase] &&
+        mcqQuestions[selectedCase].length > 0 ? (
           <InteractiveMCQQuestionsList
             questions={mcqQuestions[selectedCase]}
             expandedQuestions={expandedQuestions}
