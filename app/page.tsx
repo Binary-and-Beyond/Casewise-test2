@@ -1,17 +1,32 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, Suspense } from "react";
+import { useSearchParams, useRouter } from "next/navigation";
 import { LoginForm } from "@/components/login-form";
 import { SignUpForm } from "@/components/signup-form";
 import { ForgotPasswordForm } from "@/components/forgot-password-form";
 import { Dashboard } from "@/components/dashboard";
 import { useAuth } from "@/lib/auth-context";
 
-export default function AuthPage() {
+function AuthPageContent() {
   const { isAuthenticated, isLoading } = useAuth();
+  const searchParams = useSearchParams();
+  const router = useRouter();
   const [currentView, setCurrentView] = useState<"login" | "signup" | "forgot">(
     "login"
   );
+
+  // Handle URL parameters for authentication views
+  useEffect(() => {
+    const view = searchParams.get("view");
+    if (view === "signup") {
+      setCurrentView("signup");
+    } else if (view === "forgot-password") {
+      setCurrentView("forgot");
+    } else {
+      setCurrentView("login");
+    }
+  }, [searchParams]);
 
   // Show loading spinner while checking authentication
   if (isLoading) {
@@ -25,9 +40,10 @@ export default function AuthPage() {
     );
   }
 
-  // If user is authenticated, show dashboard
+  // If user is authenticated, redirect to dashboard
   if (isAuthenticated) {
-    return <Dashboard />;
+    router.push("/dashboard");
+    return null;
   }
 
   // Show authentication forms for non-authenticated users
@@ -61,5 +77,22 @@ export default function AuthPage() {
         )}
       </div>
     </div>
+  );
+}
+
+export default function AuthPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
+          <div className="text-center">
+            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
+            <p className="mt-4 text-gray-600">Loading...</p>
+          </div>
+        </div>
+      }
+    >
+      <AuthPageContent />
+    </Suspense>
   );
 }

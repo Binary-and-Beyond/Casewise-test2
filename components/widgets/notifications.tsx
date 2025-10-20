@@ -13,13 +13,13 @@ function DynamicTimeAgo({ dateString }: { dateString: string }) {
     // Update immediately
     setTimeAgo(formatTimeAgo(dateString));
 
-    // Update every 10 seconds for more responsive updates
+    // Update every minute for dynamic time updates
     const interval = setInterval(() => {
       const newTimeAgo = formatTimeAgo(dateString);
       setTimeAgo(newTimeAgo);
       // Force re-render by updating a counter
       setForceUpdate((prev) => prev + 1);
-    }, 10000); // 10 seconds
+    }, 60000); // 1 minute
 
     return () => clearInterval(interval);
   }, [dateString]);

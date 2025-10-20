@@ -1,6 +1,7 @@
 "use client";
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import Image from "next/image";
+import { useRouter, usePathname } from "next/navigation";
 
 import { Sidebar } from "@/components/layout/sidebar";
 import { MyAnalytics } from "@/components/widgets/my-analytics";
@@ -51,6 +52,35 @@ interface Chat {
 
 export function Dashboard({}: DashboardProps) {
   const { user, logout, isLoading: authLoading } = useAuth();
+  const router = useRouter();
+  const pathname = usePathname();
+
+  // Get current view from pathname instead of state
+  const getCurrentView = ():
+    | "main"
+    | "admin-analytics"
+    | "generate-cases"
+    | "case-selection"
+    | "generate-mcqs"
+    | "explore-cases"
+    | "identify-concepts"
+    | "concept-detail"
+    | "profile-settings"
+    | "notifications"
+    | "chatbot-flow" => {
+    if (pathname === "/dashboard") return "main";
+    if (pathname === "/dashboard/analytics") return "admin-analytics";
+    if (pathname === "/dashboard/cases") return "case-selection";
+    if (pathname === "/dashboard/mcqs") return "generate-mcqs";
+    if (pathname === "/dashboard/explore") return "explore-cases";
+    if (pathname === "/dashboard/concepts") return "identify-concepts";
+    if (pathname.startsWith("/dashboard/concepts/")) return "concept-detail";
+    if (pathname === "/dashboard/profile") return "profile-settings";
+    if (pathname === "/dashboard/notifications") return "notifications";
+    if (pathname.startsWith("/dashboard/chat/")) return "chatbot-flow";
+    return "main";
+  };
+
   const [currentView, setCurrentView] = useState<
     | "main"
     | "admin-analytics"
@@ -63,36 +93,18 @@ export function Dashboard({}: DashboardProps) {
     | "profile-settings"
     | "notifications"
     | "chatbot-flow"
-  >("main"); // Always start with main view on page reload
-  const [selectedCase, setSelectedCase] = useState<string>(() => {
-    // Load saved selected case from localStorage
-    if (typeof window !== "undefined") {
-      const savedCase = localStorage.getItem("selected_case");
-      if (savedCase) {
-        console.log("🚀 Restoring saved case:", savedCase);
-        return savedCase;
-      }
-    }
-    return "";
-  });
+  >(getCurrentView());
 
-  const [selectedConcept, setSelectedConcept] = useState<string>(() => {
-    // Load saved selected concept from localStorage
-    if (typeof window !== "undefined") {
-      const savedConcept = localStorage.getItem("selected_concept");
-      if (savedConcept) {
-        console.log("🚀 Restoring saved concept:", savedConcept);
-        return savedConcept;
-      }
-    }
-    return "";
-  });
-  const [activeChat, setActiveChat] = useState<string>(() => {
-    if (typeof window !== "undefined") {
-      return localStorage.getItem("active_chat") || "";
-    }
-    return "";
-  });
+  // Sync currentView with pathname changes
+  useEffect(() => {
+    const newView = getCurrentView();
+    setCurrentView(newView);
+  }, [pathname]);
+
+  const [selectedCase, setSelectedCase] = useState<string>("");
+
+  const [selectedConcept, setSelectedConcept] = useState<string>("");
+  const [activeChat, setActiveChat] = useState<string>("");
 
   // State for context-specific chats
   const [contextChats, setContextChats] = useState<Record<string, string>>({});
@@ -117,43 +129,8 @@ export function Dashboard({}: DashboardProps) {
   const [uploadError, setUploadError] = useState("");
   const [isAutoLoading, setIsAutoLoading] = useState(false);
   const [autoLoadingProgress, setAutoLoadingProgress] = useState("");
-  const [generatedCases, setGeneratedCases] = useState<CaseScenario[]>(() => {
-    if (typeof window !== "undefined") {
-      try {
-        const cachedCases = localStorage.getItem("generated_cases");
-        if (cachedCases) {
-          const parsedCases = JSON.parse(cachedCases);
-          console.log(
-            "🚀 Initializing generated cases from localStorage:",
-            parsedCases.length,
-            "cases"
-          );
-          return parsedCases;
-        }
-      } catch (e) {
-        console.log("❌ Failed to parse cached generated cases on init:", e);
-      }
-    }
-    return [];
-  });
-  const [chats, setChats] = useState<Chat[]>(() => {
-    if (typeof window !== "undefined") {
-      try {
-        const cachedChats = localStorage.getItem("user_chats");
-        if (cachedChats) {
-          const parsedChats = JSON.parse(cachedChats);
-          console.log(
-            "🚀 Initializing chats from localStorage:",
-            parsedChats.length
-          );
-          return parsedChats;
-        }
-      } catch (e) {
-        console.log("❌ Failed to parse cached chats on init:", e);
-      }
-    }
-    return [];
-  });
+  const [generatedCases, setGeneratedCases] = useState<CaseScenario[]>([]);
+  const [chats, setChats] = useState<Chat[]>([]);
   const [isLoadingChats, setIsLoadingChats] = useState(true);
   const [isLoadingChatsInProgress, setIsLoadingChatsInProgress] =
     useState(false);
@@ -163,46 +140,10 @@ export function Dashboard({}: DashboardProps) {
   );
   const [mcqQuestions, setMCQQuestions] = useState<
     Record<string, MCQQuestion[]>
-  >(() => {
-    if (typeof window !== "undefined") {
-      try {
-        const cachedMCQs = localStorage.getItem("mcq_questions");
-        if (cachedMCQs) {
-          const parsedMCQs = JSON.parse(cachedMCQs);
-          console.log(
-            "🚀 Initializing MCQ questions from localStorage:",
-            Object.keys(parsedMCQs).length,
-            "cases"
-          );
-          return parsedMCQs;
-        }
-      } catch (e) {
-        console.log("❌ Failed to parse cached MCQ questions on init:", e);
-      }
-    }
-    return {};
-  });
+  >({});
   const [generatedConcepts, setGeneratedConcepts] = useState<
     Record<string, string[]>
-  >(() => {
-    if (typeof window !== "undefined") {
-      try {
-        const cachedConcepts = localStorage.getItem("generated_concepts");
-        if (cachedConcepts) {
-          const parsedConcepts = JSON.parse(cachedConcepts);
-          console.log(
-            "🚀 Initializing concepts from localStorage:",
-            Object.keys(parsedConcepts).length,
-            "cases"
-          );
-          return parsedConcepts;
-        }
-      } catch (e) {
-        console.log("❌ Failed to parse cached concepts on init:", e);
-      }
-    }
-    return {};
-  });
+  >({});
   const [isGeneratingConcepts, setIsGeneratingConcepts] = useState(false);
   const [isGeneratingMCQs, setIsGeneratingMCQs] = useState<string | null>(null);
   const conceptGenerationRef = useRef<boolean>(false);
@@ -238,13 +179,94 @@ export function Dashboard({}: DashboardProps) {
       console.log(
         "🎯 No concept selected for concept-detail view, redirecting to identify-concepts"
       );
-      setCurrentView("identify-concepts");
+      navigateToView("identify-concepts");
     }
   }, [currentView, selectedConcept]);
 
-  // Clear any saved view on component mount to ensure we always start with main
+  // Load localStorage data after component mounts to avoid hydration issues
   useEffect(() => {
     if (typeof window !== "undefined") {
+      // Load selected case
+      const savedCase = localStorage.getItem("selected_case");
+      if (savedCase) {
+        console.log("🚀 Restoring saved case:", savedCase);
+        setSelectedCase(savedCase);
+      }
+
+      // Load selected concept
+      const savedConcept = localStorage.getItem("selected_concept");
+      if (savedConcept) {
+        console.log("🚀 Restoring saved concept:", savedConcept);
+        setSelectedConcept(savedConcept);
+      }
+
+      // Load active chat
+      const savedActiveChat = localStorage.getItem("active_chat");
+      if (savedActiveChat) {
+        setActiveChat(savedActiveChat);
+      }
+
+      // Load generated cases
+      try {
+        const cachedCases = localStorage.getItem("generated_cases");
+        if (cachedCases) {
+          const parsedCases = JSON.parse(cachedCases);
+          console.log(
+            "🚀 Restoring generated cases:",
+            parsedCases.length,
+            "cases"
+          );
+          setGeneratedCases(parsedCases);
+        }
+      } catch (e) {
+        console.log("❌ Failed to parse cached generated cases:", e);
+      }
+
+      // Load chats
+      try {
+        const cachedChats = localStorage.getItem("user_chats");
+        if (cachedChats) {
+          const parsedChats = JSON.parse(cachedChats);
+          console.log("🚀 Restoring chats:", parsedChats.length);
+          setChats(parsedChats);
+        }
+      } catch (e) {
+        console.log("❌ Failed to parse cached chats:", e);
+      }
+
+      // Load MCQ questions
+      try {
+        const cachedMCQs = localStorage.getItem("mcq_questions");
+        if (cachedMCQs) {
+          const parsedMCQs = JSON.parse(cachedMCQs);
+          console.log(
+            "🚀 Restoring MCQ questions:",
+            Object.keys(parsedMCQs).length,
+            "cases"
+          );
+          setMCQQuestions(parsedMCQs);
+        }
+      } catch (e) {
+        console.log("❌ Failed to parse cached MCQ questions:", e);
+      }
+
+      // Load generated concepts
+      try {
+        const cachedConcepts = localStorage.getItem("generated_concepts");
+        if (cachedConcepts) {
+          const parsedConcepts = JSON.parse(cachedConcepts);
+          console.log(
+            "🚀 Restoring concepts:",
+            Object.keys(parsedConcepts).length,
+            "cases"
+          );
+          setGeneratedConcepts(parsedConcepts);
+        }
+      } catch (e) {
+        console.log("❌ Failed to parse cached concepts:", e);
+      }
+
+      // Clear any saved view on component mount to ensure we always start with main
       localStorage.removeItem("current_view");
     }
   }, []);
@@ -339,30 +361,8 @@ export function Dashboard({}: DashboardProps) {
     }
   }, [authLoading, user]);
 
-  // Set up periodic chat refresh to ensure persistence
-  useEffect(() => {
-    if (!user) return;
-
-    const refreshInterval = setInterval(() => {
-      console.log("🔄 Periodic chat refresh...");
-      loadUserChats();
-    }, 10 * 60 * 1000); // Refresh every 10 minutes
-
-    // Also refresh when the page becomes visible again
-    const handleVisibilityChange = () => {
-      if (!document.hidden && user) {
-        console.log("🔄 Page visible, refreshing chats...");
-        loadUserChats();
-      }
-    };
-
-    document.addEventListener("visibilitychange", handleVisibilityChange);
-
-    return () => {
-      clearInterval(refreshInterval);
-      document.removeEventListener("visibilitychange", handleVisibilityChange);
-    };
-  }, [user]);
+  // Chat persistence is handled by localStorage and API calls
+  // Removed automatic refresh to prevent unnecessary reloads
 
   // Generate concepts on-demand when identify-concepts view is accessed
   useEffect(() => {
@@ -680,7 +680,7 @@ export function Dashboard({}: DashboardProps) {
 
   const startChatbotFlow = (document: Document) => {
     setSelectedDocument(document);
-    setCurrentView("chatbot-flow");
+    navigateToView("chatbot-flow");
   };
 
   const createNewChat = async (documentId?: string) => {
@@ -727,7 +727,7 @@ export function Dashboard({}: DashboardProps) {
       setActiveChat(newChat.id);
       localStorage.setItem("active_chat", newChat.id);
       setChatMessages([]);
-      setCurrentView("main");
+      navigateToView("main");
 
       // Clear any previous errors
       setUploadError("");
@@ -882,16 +882,7 @@ export function Dashboard({}: DashboardProps) {
       onMessageSent(message);
     };
 
-    if (isLoadingContext) {
-      return (
-        <div className="flex items-center justify-center h-32">
-          <div className="text-center">
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto mb-2"></div>
-            <p className="text-gray-500">Loading chat...</p>
-          </div>
-        </div>
-      );
-    }
+    // Show chat immediately without loading state
 
     if (!contextChatId) {
       return (
@@ -962,7 +953,7 @@ export function Dashboard({}: DashboardProps) {
           console.log("🔄 No chats remaining, clearing all state");
           setActiveChat("");
           localStorage.removeItem("active_chat");
-          setCurrentView("main");
+          navigateToView("main");
           setChatMessages([]);
           setGeneratedCases([]);
           setMCQQuestions({});
@@ -1308,7 +1299,7 @@ export function Dashboard({}: DashboardProps) {
         }
 
         setChatMessages([]);
-        setCurrentView("main");
+        navigateToView("main");
 
         // Auto-load all content after successful upload
         console.log("🚀 File upload successful, starting auto-generation...");
@@ -1377,7 +1368,7 @@ export function Dashboard({}: DashboardProps) {
   const performChatSwitch = async (chatId: string) => {
     setActiveChat(chatId);
     localStorage.setItem("active_chat", chatId);
-    setCurrentView("main");
+    navigateToView("main");
     setChatMessages([]);
     setSelectedCase("");
     setUploadError("");
@@ -1500,14 +1491,14 @@ export function Dashboard({}: DashboardProps) {
             label: "Home",
             onClick: () => {
               setUploadError("");
-              setCurrentView("main");
+              navigateToView("main");
             },
           },
           {
             label: documentNameWithoutExt,
             onClick: () => {
               setUploadError("");
-              setCurrentView("main");
+              navigateToView("main");
             },
           },
           { label: selectedCase || "Select Case", isActive: true },
@@ -1518,19 +1509,22 @@ export function Dashboard({}: DashboardProps) {
             label: "Home",
             onClick: () => {
               setUploadError("");
-              setCurrentView("main");
+              navigateToView("main");
             },
           },
           {
             label: documentNameWithoutExt,
             onClick: () => {
               setUploadError("");
-              setCurrentView("main");
+              navigateToView("main");
             },
           },
           {
             label: selectedCase || "Case",
-            onClick: () => setCurrentView("case-selection"),
+            onClick: () => {
+              console.log("🔘 Back button clicked in", currentView);
+              navigateToView("case-selection");
+            },
           },
           { label: "Generate MCQs", isActive: true },
         ];
@@ -1540,19 +1534,22 @@ export function Dashboard({}: DashboardProps) {
             label: "Home",
             onClick: () => {
               setUploadError("");
-              setCurrentView("main");
+              navigateToView("main");
             },
           },
           {
             label: documentNameWithoutExt,
             onClick: () => {
               setUploadError("");
-              setCurrentView("main");
+              navigateToView("main");
             },
           },
           {
             label: selectedCase || "Case",
-            onClick: () => setCurrentView("case-selection"),
+            onClick: () => {
+              console.log("🔘 Back button clicked in", currentView);
+              navigateToView("case-selection");
+            },
           },
           { label: "Explore Case", isActive: true },
         ];
@@ -1562,19 +1559,22 @@ export function Dashboard({}: DashboardProps) {
             label: "Home",
             onClick: () => {
               setUploadError("");
-              setCurrentView("main");
+              navigateToView("main");
             },
           },
           {
             label: documentNameWithoutExt,
             onClick: () => {
               setUploadError("");
-              setCurrentView("main");
+              navigateToView("main");
             },
           },
           {
             label: selectedCase || "Case",
-            onClick: () => setCurrentView("case-selection"),
+            onClick: () => {
+              console.log("🔘 Back button clicked in", currentView);
+              navigateToView("case-selection");
+            },
           },
           { label: "Identify Concepts", isActive: true },
         ];
@@ -1584,23 +1584,26 @@ export function Dashboard({}: DashboardProps) {
             label: "Home",
             onClick: () => {
               setUploadError("");
-              setCurrentView("main");
+              navigateToView("main");
             },
           },
           {
             label: documentNameWithoutExt,
             onClick: () => {
               setUploadError("");
-              setCurrentView("main");
+              navigateToView("main");
             },
           },
           {
             label: selectedCase || "Case",
-            onClick: () => setCurrentView("case-selection"),
+            onClick: () => {
+              console.log("🔘 Back button clicked in", currentView);
+              navigateToView("case-selection");
+            },
           },
           {
             label: "Identify Concepts",
-            onClick: () => setCurrentView("identify-concepts"),
+            onClick: () => navigateToView("identify-concepts"),
           },
           { label: "Question 01", isActive: true },
         ];
@@ -1610,7 +1613,7 @@ export function Dashboard({}: DashboardProps) {
             label: "Home",
             onClick: () => {
               setUploadError("");
-              setCurrentView("main");
+              navigateToView("main");
             },
           },
           { label: "Profile Settings", isActive: true },
@@ -1621,7 +1624,7 @@ export function Dashboard({}: DashboardProps) {
             label: "Home",
             onClick: () => {
               setUploadError("");
-              setCurrentView("main");
+              navigateToView("main");
             },
           },
           { label: "Notifications", isActive: true },
@@ -1632,14 +1635,14 @@ export function Dashboard({}: DashboardProps) {
             label: "Home",
             onClick: () => {
               setUploadError("");
-              setCurrentView("main");
+              navigateToView("main");
             },
           },
           {
             label: documentNameWithoutExt,
             onClick: () => {
               setUploadError("");
-              setCurrentView("main");
+              navigateToView("main");
             },
           },
           { label: "AI Chat", isActive: true },
@@ -1656,32 +1659,35 @@ export function Dashboard({}: DashboardProps) {
           label: "Back to Main",
           onClick: () => {
             setUploadError("");
-            setCurrentView("main");
+            navigateToView("main");
           },
         };
       case "generate-mcqs":
         return {
           label: "Back to Case",
-          onClick: () =>
-            handleNavigationAttempt(() => setCurrentView("case-selection")),
+          onClick: () => navigateToView("case-selection"),
         };
       case "explore-cases":
         return {
           label: "Back to Case",
-          onClick: () =>
-            handleNavigationAttempt(() => setCurrentView("case-selection")),
+          onClick: () => navigateToView("case-selection"),
         };
       case "identify-concepts":
         return {
           label: "Back to Case",
-          onClick: () => setCurrentView("case-selection"),
+          onClick: () => navigateToView("case-selection"),
+        };
+      case "concept-detail":
+        return {
+          label: "Back to Concepts",
+          onClick: () => navigateToView("identify-concepts"),
         };
       case "profile-settings":
         return {
           label: "Back to Main",
           onClick: () => {
             setUploadError("");
-            setCurrentView("main");
+            navigateToView("main");
           },
         };
       case "notifications":
@@ -1689,7 +1695,7 @@ export function Dashboard({}: DashboardProps) {
           label: "Back to Main",
           onClick: () => {
             setUploadError("");
-            setCurrentView("main");
+            navigateToView("main");
           },
         };
       case "chatbot-flow":
@@ -1697,7 +1703,7 @@ export function Dashboard({}: DashboardProps) {
           label: "Back to Main",
           onClick: () => {
             setUploadError("");
-            setCurrentView("main");
+            navigateToView("main");
           },
         };
       default:
@@ -2264,12 +2270,52 @@ export function Dashboard({}: DashboardProps) {
     ) {
       handleNavigationAttempt(() => {
         setUploadError("");
-        setCurrentView(view);
+        setCurrentViewWithPersistence(view);
       });
     } else {
       // Clear any error messages when changing views
       setUploadError("");
-      setCurrentView(view);
+      setCurrentViewWithPersistence(view);
+    }
+  };
+
+  const navigateToView = (view: string) => {
+    switch (view) {
+      case "main":
+        router.push("/dashboard");
+        break;
+      case "admin-analytics":
+        router.push("/dashboard/analytics");
+        break;
+      case "case-selection":
+        router.push("/dashboard/cases");
+        break;
+      case "generate-mcqs":
+        router.push("/dashboard/mcqs");
+        break;
+      case "explore-cases":
+        router.push("/dashboard/explore");
+        break;
+      case "identify-concepts":
+        router.push("/dashboard/concepts");
+        break;
+      case "concept-detail":
+        // For concept detail, we need to navigate to a specific concept
+        // This will be handled by the concept selection logic
+        router.push("/dashboard/concepts");
+        break;
+      case "profile-settings":
+        router.push("/dashboard/profile");
+        break;
+      case "notifications":
+        router.push("/dashboard/notifications");
+        break;
+      case "chatbot-flow":
+        router.push("/dashboard");
+        break;
+      default:
+        router.push("/dashboard");
+        break;
     }
   };
 
@@ -2287,7 +2333,8 @@ export function Dashboard({}: DashboardProps) {
       | "notifications"
       | "chatbot-flow"
   ) => {
-    setCurrentView(view);
+    // All views now have routes, so navigate to them
+    navigateToView(view);
   };
 
   const setSelectedCaseWithPersistence = (caseTitle: string) => {
@@ -2298,7 +2345,9 @@ export function Dashboard({}: DashboardProps) {
   const handleConceptSelect = (concept: string) => {
     setSelectedConcept(concept);
     localStorage.setItem("selected_concept", concept);
-    setCurrentViewWithPersistence("concept-detail");
+    // Navigate to the specific concept route
+    const conceptId = concept.toLowerCase().replace(/\s+/g, "-");
+    router.push(`/dashboard/concepts/${conceptId}`);
   };
 
   // MCQ completion handlers
@@ -2335,7 +2384,7 @@ export function Dashboard({}: DashboardProps) {
       const analyticsData = {
         correct_answers: completionStats.correct,
         total_questions: completionStats.total,
-        case_id: null, // Dashboard doesn't have case context
+        // case_id is optional and not needed for dashboard context
       };
 
       console.log("📤 Sending analytics data:", analyticsData);
@@ -2389,17 +2438,7 @@ export function Dashboard({}: DashboardProps) {
   const renderMainDashboard = () => {
     const currentFile = getCurrentChatFile();
 
-    // Show loading state while chats are being loaded
-    if (isLoadingChats) {
-      return (
-        <div className="flex-1 p-8 flex flex-col items-center justify-center">
-          <div className="text-center max-w-md">
-            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
-            <p className="text-gray-600">Loading your dashboard...</p>
-          </div>
-        </div>
-      );
-    }
+    // Show dashboard immediately without loading state
 
     // Show welcome screen if no chats exist
     if (chats.length === 0) {
@@ -2639,7 +2678,7 @@ export function Dashboard({}: DashboardProps) {
   const renderCaseSelection = () => {
     // If no chats exist, redirect to main view
     if (chats.length === 0) {
-      setCurrentView("main");
+      navigateToView("main");
       return null;
     }
 
@@ -2662,7 +2701,7 @@ export function Dashboard({}: DashboardProps) {
             <div className="text-right">
               <p
                 className="text-sm font-medium text-gray-900 cursor-pointer hover:text-blue-600"
-                onClick={() => setCurrentView("main")}
+                onClick={() => navigateToView("main")}
               >
                 Cases
               </p>
@@ -2673,9 +2712,7 @@ export function Dashboard({}: DashboardProps) {
 
         <CaseSelectionOptions
           onGenerateMCQs={() => setCurrentViewWithPersistence("generate-mcqs")}
-          onIdentifyConcepts={() =>
-            setCurrentViewWithPersistence("identify-concepts")
-          }
+          onIdentifyConcepts={() => navigateToView("identify-concepts")}
           onExploreCases={() => setCurrentViewWithPersistence("explore-cases")}
         />
       </div>
@@ -2685,7 +2722,7 @@ export function Dashboard({}: DashboardProps) {
   const renderGenerateMCQs = () => {
     // If no chats exist, redirect to main view
     if (chats.length === 0) {
-      setCurrentView("main");
+      navigateToView("main");
       return null;
     }
 
@@ -2706,11 +2743,7 @@ export function Dashboard({}: DashboardProps) {
             <div className="text-right">
               <p
                 className="text-sm font-medium text-gray-900 cursor-pointer hover:text-blue-600"
-                onClick={() =>
-                  handleNavigationAttempt(() =>
-                    setCurrentView("case-selection")
-                  )
-                }
+                onClick={() => navigateToView("case-selection")}
               >
                 Options
               </p>
@@ -2804,7 +2837,7 @@ export function Dashboard({}: DashboardProps) {
 
     // If no chats exist, redirect to main view
     if (chats.length === 0) {
-      setCurrentView("main");
+      navigateToView("main");
       return null;
     }
 
@@ -2825,11 +2858,7 @@ export function Dashboard({}: DashboardProps) {
             <div className="text-right">
               <p
                 className="text-sm font-medium text-gray-900 cursor-pointer hover:text-blue-600"
-                onClick={() =>
-                  handleNavigationAttempt(() =>
-                    setCurrentView("case-selection")
-                  )
-                }
+                onClick={() => navigateToView("case-selection")}
               >
                 Options
               </p>
@@ -2889,7 +2918,7 @@ export function Dashboard({}: DashboardProps) {
   const renderIdentifyConcepts = () => {
     // If no chats exist, redirect to main view
     if (chats.length === 0) {
-      setCurrentView("main");
+      navigateToView("main");
       return null;
     }
 
@@ -2910,11 +2939,7 @@ export function Dashboard({}: DashboardProps) {
             <div className="text-right">
               <p
                 className="text-sm font-medium text-gray-900 cursor-pointer hover:text-blue-600"
-                onClick={() =>
-                  handleNavigationAttempt(() =>
-                    setCurrentView("case-selection")
-                  )
-                }
+                onClick={() => navigateToView("case-selection")}
               >
                 Options
               </p>
@@ -2976,7 +3001,7 @@ export function Dashboard({}: DashboardProps) {
   const renderConceptDetail = () => {
     // If no chats exist, redirect to main view
     if (chats.length === 0) {
-      setCurrentView("main");
+      navigateToView("main");
       return null;
     }
 
@@ -2997,7 +3022,7 @@ export function Dashboard({}: DashboardProps) {
             <div className="text-right">
               <p
                 className="text-sm font-medium text-gray-900 cursor-pointer hover:text-blue-600"
-                onClick={() => setCurrentView("identify-concepts")}
+                onClick={() => navigateToView("identify-concepts")}
               >
                 Topics
               </p>
@@ -3078,24 +3103,14 @@ export function Dashboard({}: DashboardProps) {
   };
 
   const renderProfileSettings = () => {
-    return <ProfileSettings onBack={() => setCurrentView("main")} />;
+    return <ProfileSettings onBack={() => navigateToView("main")} />;
   };
 
   const renderNotifications = () => {
-    return <Notifications onBack={() => setCurrentView("main")} />;
+    return <Notifications onBack={() => navigateToView("main")} />;
   };
 
-  // Show loading state while authentication is in progress
-  if (authLoading) {
-    return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
-          <p className="mt-4 text-gray-600">Loading...</p>
-        </div>
-      </div>
-    );
-  }
+  // Authentication loading is handled by the auth context
 
   return (
     <div className="min-h-screen bg-gray-50 flex relative">
@@ -3121,7 +3136,7 @@ export function Dashboard({}: DashboardProps) {
         {currentView === "chatbot-flow" && selectedDocument && (
           <ChatbotFlow
             document={selectedDocument}
-            onBack={() => setCurrentView("main")}
+            onBack={() => navigateToView("main")}
           />
         )}
         {currentView === "profile-settings" && renderProfileSettings()}
