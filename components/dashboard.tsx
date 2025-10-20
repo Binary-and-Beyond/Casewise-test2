@@ -101,10 +101,35 @@ export function Dashboard({}: DashboardProps) {
     setCurrentView(newView);
   }, [pathname]);
 
-  const [selectedCase, setSelectedCase] = useState<string>("");
+  const [selectedCase, setSelectedCase] = useState<string>(() => {
+    // Load saved selected case from localStorage
+    if (typeof window !== "undefined") {
+      const savedCase = localStorage.getItem("selected_case");
+      if (savedCase) {
+        console.log("🚀 Restoring saved case:", savedCase);
+        return savedCase;
+      }
+    }
+    return "";
+  });
 
-  const [selectedConcept, setSelectedConcept] = useState<string>("");
-  const [activeChat, setActiveChat] = useState<string>("");
+  const [selectedConcept, setSelectedConcept] = useState<string>(() => {
+    // Load saved selected concept from localStorage
+    if (typeof window !== "undefined") {
+      const savedConcept = localStorage.getItem("selected_concept");
+      if (savedConcept) {
+        console.log("🚀 Restoring saved concept:", savedConcept);
+        return savedConcept;
+      }
+    }
+    return "";
+  });
+  const [activeChat, setActiveChat] = useState<string>(() => {
+    if (typeof window !== "undefined") {
+      return localStorage.getItem("active_chat") || "";
+    }
+    return "";
+  });
 
   // State for context-specific chats
   const [contextChats, setContextChats] = useState<Record<string, string>>({});
@@ -129,8 +154,43 @@ export function Dashboard({}: DashboardProps) {
   const [uploadError, setUploadError] = useState("");
   const [isAutoLoading, setIsAutoLoading] = useState(false);
   const [autoLoadingProgress, setAutoLoadingProgress] = useState("");
-  const [generatedCases, setGeneratedCases] = useState<CaseScenario[]>([]);
-  const [chats, setChats] = useState<Chat[]>([]);
+  const [generatedCases, setGeneratedCases] = useState<CaseScenario[]>(() => {
+    if (typeof window !== "undefined") {
+      try {
+        const cachedCases = localStorage.getItem("generated_cases");
+        if (cachedCases) {
+          const parsedCases = JSON.parse(cachedCases);
+          console.log(
+            "🚀 Initializing generated cases from localStorage:",
+            parsedCases.length,
+            "cases"
+          );
+          return parsedCases;
+        }
+      } catch (e) {
+        console.log("❌ Failed to parse cached generated cases on init:", e);
+      }
+    }
+    return [];
+  });
+  const [chats, setChats] = useState<Chat[]>(() => {
+    if (typeof window !== "undefined") {
+      try {
+        const cachedChats = localStorage.getItem("user_chats");
+        if (cachedChats) {
+          const parsedChats = JSON.parse(cachedChats);
+          console.log(
+            "🚀 Initializing chats from localStorage:",
+            parsedChats.length
+          );
+          return parsedChats;
+        }
+      } catch (e) {
+        console.log("❌ Failed to parse cached chats on init:", e);
+      }
+    }
+    return [];
+  });
   const [isLoadingChats, setIsLoadingChats] = useState(true);
   const [isLoadingChatsInProgress, setIsLoadingChatsInProgress] =
     useState(false);
@@ -140,10 +200,46 @@ export function Dashboard({}: DashboardProps) {
   );
   const [mcqQuestions, setMCQQuestions] = useState<
     Record<string, MCQQuestion[]>
-  >({});
+  >(() => {
+    if (typeof window !== "undefined") {
+      try {
+        const cachedMCQs = localStorage.getItem("mcq_questions");
+        if (cachedMCQs) {
+          const parsedMCQs = JSON.parse(cachedMCQs);
+          console.log(
+            "🚀 Initializing MCQ questions from localStorage:",
+            Object.keys(parsedMCQs).length,
+            "cases"
+          );
+          return parsedMCQs;
+        }
+      } catch (e) {
+        console.log("❌ Failed to parse cached MCQ questions on init:", e);
+      }
+    }
+    return {};
+  });
   const [generatedConcepts, setGeneratedConcepts] = useState<
     Record<string, string[]>
-  >({});
+  >(() => {
+    if (typeof window !== "undefined") {
+      try {
+        const cachedConcepts = localStorage.getItem("generated_concepts");
+        if (cachedConcepts) {
+          const parsedConcepts = JSON.parse(cachedConcepts);
+          console.log(
+            "🚀 Initializing concepts from localStorage:",
+            Object.keys(parsedConcepts).length,
+            "cases"
+          );
+          return parsedConcepts;
+        }
+      } catch (e) {
+        console.log("❌ Failed to parse cached concepts on init:", e);
+      }
+    }
+    return {};
+  });
   const [isGeneratingConcepts, setIsGeneratingConcepts] = useState(false);
   const [isGeneratingMCQs, setIsGeneratingMCQs] = useState<string | null>(null);
   const conceptGenerationRef = useRef<boolean>(false);
@@ -183,90 +279,9 @@ export function Dashboard({}: DashboardProps) {
     }
   }, [currentView, selectedConcept]);
 
-  // Load localStorage data after component mounts to avoid hydration issues
+  // Clear any saved view on component mount to ensure we always start with main
   useEffect(() => {
     if (typeof window !== "undefined") {
-      // Load selected case
-      const savedCase = localStorage.getItem("selected_case");
-      if (savedCase) {
-        console.log("🚀 Restoring saved case:", savedCase);
-        setSelectedCase(savedCase);
-      }
-
-      // Load selected concept
-      const savedConcept = localStorage.getItem("selected_concept");
-      if (savedConcept) {
-        console.log("🚀 Restoring saved concept:", savedConcept);
-        setSelectedConcept(savedConcept);
-      }
-
-      // Load active chat
-      const savedActiveChat = localStorage.getItem("active_chat");
-      if (savedActiveChat) {
-        setActiveChat(savedActiveChat);
-      }
-
-      // Load generated cases
-      try {
-        const cachedCases = localStorage.getItem("generated_cases");
-        if (cachedCases) {
-          const parsedCases = JSON.parse(cachedCases);
-          console.log(
-            "🚀 Restoring generated cases:",
-            parsedCases.length,
-            "cases"
-          );
-          setGeneratedCases(parsedCases);
-        }
-      } catch (e) {
-        console.log("❌ Failed to parse cached generated cases:", e);
-      }
-
-      // Load chats
-      try {
-        const cachedChats = localStorage.getItem("user_chats");
-        if (cachedChats) {
-          const parsedChats = JSON.parse(cachedChats);
-          console.log("🚀 Restoring chats:", parsedChats.length);
-          setChats(parsedChats);
-        }
-      } catch (e) {
-        console.log("❌ Failed to parse cached chats:", e);
-      }
-
-      // Load MCQ questions
-      try {
-        const cachedMCQs = localStorage.getItem("mcq_questions");
-        if (cachedMCQs) {
-          const parsedMCQs = JSON.parse(cachedMCQs);
-          console.log(
-            "🚀 Restoring MCQ questions:",
-            Object.keys(parsedMCQs).length,
-            "cases"
-          );
-          setMCQQuestions(parsedMCQs);
-        }
-      } catch (e) {
-        console.log("❌ Failed to parse cached MCQ questions:", e);
-      }
-
-      // Load generated concepts
-      try {
-        const cachedConcepts = localStorage.getItem("generated_concepts");
-        if (cachedConcepts) {
-          const parsedConcepts = JSON.parse(cachedConcepts);
-          console.log(
-            "🚀 Restoring concepts:",
-            Object.keys(parsedConcepts).length,
-            "cases"
-          );
-          setGeneratedConcepts(parsedConcepts);
-        }
-      } catch (e) {
-        console.log("❌ Failed to parse cached concepts:", e);
-      }
-
-      // Clear any saved view on component mount to ensure we always start with main
       localStorage.removeItem("current_view");
     }
   }, []);
