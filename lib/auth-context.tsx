@@ -14,6 +14,7 @@ interface AuthContextType {
   token: string | null;
   isLoading: boolean;
   login: (email: string, password: string) => Promise<void>;
+  adminLogin: (email: string, password: string) => Promise<void>;
   signup: (
     email: string,
     username: string,
@@ -23,6 +24,7 @@ interface AuthContextType {
   googleAuth: (idToken: string) => Promise<void>;
   logout: () => void;
   isAuthenticated: boolean;
+  isAdmin: boolean;
   refreshToken: () => Promise<boolean>;
   refreshUser: () => Promise<void>;
 }
@@ -103,6 +105,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   };
 
+  const adminLogin = async (email: string, password: string) => {
+    try {
+      const response: AuthResponse = await apiService.adminLogin({
+        email,
+        password,
+      });
+
+      // Store token
+      localStorage.setItem("auth_token", response.access_token);
+      setToken(response.access_token);
+
+      // Get user data
+      const userData = await apiService.getCurrentUser();
+      setUser(userData);
+    } catch (error) {
+      throw error;
+    }
+  };
+
   const signup = async (
     email: string,
     username: string,
@@ -158,9 +179,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const logout = () => {
+    // Clear authentication data
     localStorage.removeItem("auth_token");
     setToken(null);
     setUser(null);
+
+    // Clear any pending API calls or redirect to login
+    console.log("User logged out successfully");
+
+    // Redirect to login page if not already there
+    if (typeof window !== "undefined" && window.location.pathname !== "/") {
+      window.location.href = "/";
+    }
   };
 
   const refreshUser = async () => {
@@ -177,12 +207,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     token,
     isLoading,
     login,
+    adminLogin,
     signup,
     googleAuth,
     logout,
     refreshToken,
     refreshUser,
     isAuthenticated: !!token && !!user,
+    isAdmin: user?.role === "admin",
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

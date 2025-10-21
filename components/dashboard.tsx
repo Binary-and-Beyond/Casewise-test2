@@ -25,6 +25,8 @@ import { MCQCompletionPopup } from "@/components/widgets/mcq-completion-popup";
 import { NavigationWarningPopup } from "@/components/widgets/navigation-warning-popup";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/lib/auth-context";
+import { AdminAnalyticsTable } from "@/components/widgets/admin-analytics-table";
+import { UserManagement } from "@/components/widgets/user-management";
 import {
   apiService,
   Document,
@@ -51,9 +53,17 @@ interface Chat {
 }
 
 export function Dashboard({}: DashboardProps) {
-  const { user, logout, isLoading: authLoading } = useAuth();
+  const { user, logout, isLoading: authLoading, isAdmin } = useAuth();
   const router = useRouter();
   const pathname = usePathname();
+
+  // Redirect to login if user is not authenticated
+  useEffect(() => {
+    if (!authLoading && !user) {
+      console.log("🔄 No authenticated user, redirecting to login");
+      router.push("/");
+    }
+  }, [authLoading, user, router]);
 
   // Get current view from pathname instead of state
   const getCurrentView = ():
@@ -362,7 +372,7 @@ export function Dashboard({}: DashboardProps) {
       !!user
     );
 
-    if (!authLoading && user) {
+    if (!authLoading && user && user.id) {
       console.log("🔄 Auth complete, loading chats for user:", user.id);
       loadUserChats();
     } else if (!authLoading && !user) {
@@ -464,6 +474,12 @@ export function Dashboard({}: DashboardProps) {
     // Prevent multiple simultaneous calls
     if (isLoadingChatsInProgress) {
       console.log("🔄 Chat loading already in progress, skipping...");
+      return;
+    }
+
+    // Check if user is authenticated before making API calls
+    if (!user || !user.id) {
+      console.log("🔄 No authenticated user, skipping chat loading");
       return;
     }
 
@@ -1680,7 +1696,8 @@ export function Dashboard({}: DashboardProps) {
       case "generate-mcqs":
         return {
           label: "Back to Case",
-          onClick: () => navigateToView("case-selection"),
+          onClick: () =>
+            handleNavigationAttempt(() => navigateToView("case-selection")),
         };
       case "explore-cases":
         return {
@@ -2381,6 +2398,9 @@ export function Dashboard({}: DashboardProps) {
   };
 
   const [isUpdatingAnalytics, setIsUpdatingAnalytics] = useState(false);
+  const [adminView, setAdminView] = useState<"analytics" | "user-management">(
+    "analytics"
+  );
 
   const handleCompletionPopupContinue = async () => {
     // Prevent multiple clicks
@@ -2448,7 +2468,59 @@ export function Dashboard({}: DashboardProps) {
     setHasUnsavedProgress(true);
   };
 
-  const renderMyAnalytics = () => <MyAnalytics />;
+  const renderMyAnalytics = () => {
+    if (isAdmin) {
+      return (
+        <div className="space-y-8 p-6">
+          <div className="flex items-center justify-between">
+            <div>
+              <h1 className="text-3xl font-bold text-gray-900">
+                Admin Analytics
+              </h1>
+              <p className="text-gray-600 mt-2">
+                Monitor user activity and system performance
+              </p>
+            </div>
+            <div className="flex space-x-3">
+              <Button
+                onClick={() => setAdminView("analytics")}
+                variant={adminView === "analytics" ? "default" : "outline"}
+                className={`px-6 py-2 ${
+                  adminView === "analytics" ? "bg-blue-600 text-white" : ""
+                }`}
+              >
+                Analytics
+              </Button>
+              <Button
+                onClick={() => setAdminView("user-management")}
+                variant={
+                  adminView === "user-management" ? "default" : "outline"
+                }
+                className={`px-6 py-2 ${
+                  adminView === "user-management"
+                    ? "bg-blue-600 text-white"
+                    : ""
+                }`}
+              >
+                User Management
+              </Button>
+            </div>
+          </div>
+
+          {adminView === "analytics" && (
+            <AdminAnalyticsTable
+              onManageUsers={() => setAdminView("user-management")}
+            />
+          )}
+
+          {adminView === "user-management" && (
+            <UserManagement onBack={() => setAdminView("analytics")} />
+          )}
+        </div>
+      );
+    }
+    return <MyAnalytics />;
+  };
 
   const renderMainDashboard = () => {
     const currentFile = getCurrentChatFile();
@@ -2701,7 +2773,10 @@ export function Dashboard({}: DashboardProps) {
       <div className="flex-1 p-8">
         <div className="mb-6">
           {renderBackButton()}
-          <Breadcrumb items={getDynamicBreadcrumbs()} />
+          <Breadcrumb
+            items={getDynamicBreadcrumbs()}
+            onNavigationAttempt={handleNavigationAttempt}
+          />
           <div className="flex items-center justify-between mb-6">
             <div className="flex items-center">
               <h1 className="text-2xl font-semibold text-gray-900 mr-3">
@@ -2745,7 +2820,10 @@ export function Dashboard({}: DashboardProps) {
       <div className="flex-1 p-8">
         <div className="mb-6">
           {renderBackButton()}
-          <Breadcrumb items={getDynamicBreadcrumbs()} />
+          <Breadcrumb
+            items={getDynamicBreadcrumbs()}
+            onNavigationAttempt={handleNavigationAttempt}
+          />
           <div className="flex items-center justify-between mb-6">
             <div className="flex items-center">
               <h1 className="text-2xl font-semibold text-gray-900 mr-3">
@@ -2758,7 +2836,11 @@ export function Dashboard({}: DashboardProps) {
             <div className="text-right">
               <p
                 className="text-sm font-medium text-gray-900 cursor-pointer hover:text-blue-600"
-                onClick={() => navigateToView("case-selection")}
+                onClick={() =>
+                  handleNavigationAttempt(() =>
+                    navigateToView("case-selection")
+                  )
+                }
               >
                 Options
               </p>
@@ -2860,7 +2942,10 @@ export function Dashboard({}: DashboardProps) {
       <div className="flex-1 p-8 flex flex-col h-full">
         <div className="mb-6">
           {renderBackButton()}
-          <Breadcrumb items={getDynamicBreadcrumbs()} />
+          <Breadcrumb
+            items={getDynamicBreadcrumbs()}
+            onNavigationAttempt={handleNavigationAttempt}
+          />
           <div className="flex items-center justify-between mb-6">
             <div className="flex items-center">
               <h1 className="text-2xl font-semibold text-gray-900 mr-3">
@@ -2941,7 +3026,10 @@ export function Dashboard({}: DashboardProps) {
       <div className="flex-1 p-8 flex flex-col">
         <div className="mb-6">
           {renderBackButton()}
-          <Breadcrumb items={getDynamicBreadcrumbs()} />
+          <Breadcrumb
+            items={getDynamicBreadcrumbs()}
+            onNavigationAttempt={handleNavigationAttempt}
+          />
           <div className="flex items-center justify-between mb-6">
             <div className="flex items-center">
               <h1 className="text-2xl font-semibold text-gray-900 mr-3">
@@ -3024,7 +3112,10 @@ export function Dashboard({}: DashboardProps) {
       <div className="flex-1 p-8 flex flex-col h-full">
         <div className="mb-6">
           {renderBackButton()}
-          <Breadcrumb items={getDynamicBreadcrumbs()} />
+          <Breadcrumb
+            items={getDynamicBreadcrumbs()}
+            onNavigationAttempt={handleNavigationAttempt}
+          />
           <div className="flex items-center justify-between mb-6">
             <div className="flex items-center">
               <h1 className="text-2xl font-semibold text-gray-900 mr-3">
@@ -3125,7 +3216,22 @@ export function Dashboard({}: DashboardProps) {
     return <Notifications onBack={() => navigateToView("main")} />;
   };
 
-  // Authentication loading is handled by the auth context
+  // Show loading while checking authentication
+  if (authLoading) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto"></div>
+          <p className="mt-4 text-gray-600">Loading...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Don't render dashboard if user is not authenticated (will redirect)
+  if (!user) {
+    return null;
+  }
 
   return (
     <div className="min-h-screen bg-gray-50 flex relative">

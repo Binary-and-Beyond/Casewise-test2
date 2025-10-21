@@ -13,6 +13,7 @@ export interface User {
   last_name?: string;
   profile_image_url?: string;
   bio?: string;
+  role?: "user" | "admin";
   created_at: string;
   updated_at?: string;
 }
@@ -208,6 +209,15 @@ class ApiService {
     return null;
   }
 
+  private checkAuthentication(): boolean {
+    const token = this.getAuthToken();
+    if (!token) {
+      console.warn("No authentication token found, skipping API call");
+      return false;
+    }
+    return true;
+  }
+
   // Test backend connection
   async testConnection(): Promise<{ success: boolean; message: string }> {
     try {
@@ -351,6 +361,26 @@ class ApiService {
     return this.handleResponse<AuthResponse>(response);
   }
 
+  async adminLogin(credentials: LoginRequest): Promise<AuthResponse> {
+    console.log("🔥 FRONTEND: About to call admin login");
+    console.log("URL:", `${API_BASE_URL}/admin/login`);
+    console.log("Credentials:", credentials);
+
+    const response = await fetch(`${API_BASE_URL}/admin/login`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      mode: "cors",
+      credentials: "include",
+      body: JSON.stringify(credentials),
+    });
+
+    console.log("Response status:", response.status);
+    return this.handleResponse<AuthResponse>(response);
+  }
+
   async googleAuth(idToken: string): Promise<AuthResponse> {
     console.log("🔥 FRONTEND: About to call Google auth");
     console.log("URL:", `${API_BASE_URL}/auth/google`);
@@ -421,6 +451,16 @@ class ApiService {
       credentials: "include",
     });
     return this.handleResponse<User>(response);
+  }
+
+  async getAllUsers(): Promise<{ users: User[] }> {
+    const response = await fetch(`${API_BASE_URL}/admin/users`, {
+      method: "GET",
+      headers: this.getHeaders(),
+      mode: "cors",
+      credentials: "include",
+    });
+    return this.handleResponse<{ users: User[] }>(response);
   }
 
   // Document endpoints
@@ -755,6 +795,11 @@ class ApiService {
   }
 
   async getUserChats(): Promise<ChatSession[]> {
+    if (!this.checkAuthentication()) {
+      console.log("🌐 API: No authentication token, returning empty chats");
+      return [];
+    }
+
     console.log("🌐 API: Getting user chats...");
     console.log("🌐 API: Headers:", this.getHeaders());
     console.log("🌐 API: URL:", `${API_BASE_URL}/chats`);

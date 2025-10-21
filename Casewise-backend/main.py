@@ -267,9 +267,46 @@ def connect_to_mongodb():
         db.generated_concepts.create_index("chat_id")
         db.generated_concepts.create_index("document_id")
         
+        # Create admin user if it doesn't exist
+        create_admin_user()
+        
     except Exception as e:
         print(f"Failed to connect to MongoDB: {e}")
         raise
+
+def create_admin_user():
+    """Create a default admin user if it doesn't exist"""
+    try:
+        if db is None:
+            return
+            
+        # Check if admin user already exists
+        admin_user = db.users.find_one({"email": "admin@casewise.com"})
+        if admin_user:
+            print("✅ Admin user already exists")
+            return
+            
+        # Create admin user
+        admin_password = "admin123"
+        hashed_password = hash_password(admin_password)
+        
+        admin_user_data = {
+            "email": "admin@casewise.com",
+            "username": "admin",
+            "full_name": "System Administrator",
+            "hashed_password": hashed_password,
+            "role": "admin",
+            "is_active": True,
+            "created_at": datetime.utcnow(),
+            "updated_at": datetime.utcnow()
+        }
+        
+        result = db.users.insert_one(admin_user_data)
+        print(f"✅ Admin user created with ID: {result.inserted_id}")
+        print("📧 Admin credentials: admin@casewise.com / admin123")
+        
+    except Exception as e:
+        print(f"❌ Failed to create admin user: {e}")
 
 def get_database():
     return db
@@ -325,6 +362,7 @@ class UserResponse(BaseModel):
     last_name: Optional[str] = None
     profile_image_url: Optional[str] = None
     bio: Optional[str] = None
+    role: Optional[str] = "user"
     created_at: datetime
     updated_at: Optional[datetime] = None
 
@@ -1010,6 +1048,59 @@ def login(user_credentials: UserLogin):
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Login error: {str(e)}")
 
+@app.post("/admin/login", response_model=Token)
+def admin_login(user_credentials: UserLogin):
+    print(" ADMIN LOGIN ENDPOINT CALLED")
+    print(f" Email: {user_credentials.email}")
+    print(f" Password length: {len(user_credentials.password)}")
+    
+    try:
+        # Check if database is connected
+        if db is None:
+            print(" Database not connected")
+            raise HTTPException(status_code=500, detail="Database connection error")
+        
+        # Find admin user by email
+        user = db.users.find_one({"email": user_credentials.email, "role": "admin"})
+        print(f" Admin user found: {user is not None}")
+        
+        if not user:
+            print(" Admin user not found")
+            raise HTTPException(status_code=401, detail="Incorrect email or password")
+        
+        print(f" Admin user details: {user.get('username')} - Active: {user.get('is_active', True)}")
+        
+        # Verify password
+        password_valid = verify_password(user_credentials.password, user["hashed_password"])
+        print(f" Password verification result: {password_valid}")
+        
+        if not password_valid:
+            print(" Invalid password")
+            raise HTTPException(status_code=401, detail="Incorrect email or password")
+        
+        # Check if user is active
+        if not user.get("is_active", True):
+            print(" Admin user inactive")
+            raise HTTPException(status_code=400, detail="Inactive user")
+        
+        # Create access token
+        access_token = create_access_token(data={"sub": str(user["_id"])})
+        print(" Admin login successful - token created")
+        
+        return {
+            "access_token": access_token,
+            "token_type": "bearer",
+            "user_id": str(user["_id"]),
+            "email": user["email"]
+        }
+        
+    except HTTPException as he:
+        print(f" HTTP Exception: {he.detail}")
+        raise
+    except Exception as e:
+        print(f" Unexpected error during admin login: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
 @app.post("/auth/google", response_model=Token)
 def google_auth(request: GoogleAuthRequest):
     """Authenticate user with Google OAuth"""
@@ -1188,10 +1279,66 @@ def get_current_user_info(current_user: dict = Depends(get_current_user)):
         "last_name": current_user.get("last_name"),
         "profile_image_url": current_user.get("profile_image_url"),
         "bio": current_user.get("bio"),
+        "role": current_user.get("role", "user"),
         "created_at": current_user["created_at"],
         "updated_at": current_user.get("updated_at")
     }
     return user_response
+
+@app.post("/logout")
+def logout():
+    """Logout endpoint - token invalidation is handled client-side"""
+    return {"message": "Logged out successfully"}
+
+@app.get("/admin/users")
+def get_all_users(current_user: dict = Depends(get_current_user)):
+    """Get all users for admin analytics - admin only"""
+    # Check if user is admin
+    if current_user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    
+    try:
+        # Get all users from database
+        users_cursor = db.users.find({}, {
+            "_id": 1,
+            "email": 1,
+            "username": 1,
+            "full_name": 1,
+            "role": 1,
+            "is_active": 1,
+            "created_at": 1,
+            "updated_at": 1,
+            "analytics": 1
+        })
+        
+        users = []
+        for user in users_cursor:
+            # Get analytics data for each user
+            analytics = user.get("analytics", {})
+            
+            user_data = {
+                "id": str(user["_id"]),
+                "email": user["email"],
+                "username": user["username"],
+                "full_name": user.get("full_name"),
+                "role": user.get("role", "user"),
+                "status": "active" if user.get("is_active", True) else "inactive",
+                "created_at": user["created_at"].strftime("%Y-%m-%d") if user.get("created_at") else "N/A",
+                "last_active": analytics.get("last_active", "N/A"),
+                "time_spent": analytics.get("time_spent", "0 mins"),
+                "cases_uploaded": analytics.get("cases_uploaded", 0),
+                "mcq_attempted": analytics.get("mcq_attempted", 0),
+                "most_questions_type": analytics.get("most_questions_type", "Easy"),
+                "total_cases": analytics.get("cases_uploaded", 0),
+                "total_mcqs": analytics.get("mcq_attempted", 0)
+            }
+            users.append(user_data)
+        
+        return {"users": users}
+        
+    except Exception as e:
+        print(f"Error fetching users: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch users data")
 
 @app.put("/profile", response_model=UserResponse)
 async def update_profile(

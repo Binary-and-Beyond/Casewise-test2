@@ -126,7 +126,7 @@ export function Sidebar({
           onClick={() => setCurrentView("admin-analytics")}
           className="text-sm font-medium text-gray-700 hover:text-blue-600 cursor-pointer"
         >
-          My Analytics
+          {user?.role === "admin" ? "Admin Analytics" : "My Analytics"}
         </button>
       </div>
 

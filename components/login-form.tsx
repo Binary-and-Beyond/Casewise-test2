@@ -14,12 +14,14 @@ import { BiHide, BiShow } from "react-icons/bi";
 interface LoginFormProps {
   onSignUpClick: () => void;
   onForgotPasswordClick: () => void;
+  onAdminLoginClick: () => void;
   onLoginSuccess: () => void; // Added onLoginSuccess prop
 }
 
 export function LoginForm({
   onSignUpClick,
   onForgotPasswordClick,
+  onAdminLoginClick,
   onLoginSuccess,
 }: LoginFormProps) {
   const [email, setEmail] = useState("");
@@ -251,6 +253,15 @@ export function LoginForm({
             Sign Up
           </button>
         </p>
+      </div>
+
+      <div className="mt-4 text-center">
+        <button
+          onClick={onAdminLoginClick}
+          className="text-sm text-gray-500 hover:text-gray-700 underline"
+        >
+          Admin Login
+        </button>
       </div>
     </div>
   );

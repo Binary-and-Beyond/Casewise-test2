@@ -5,6 +5,7 @@ import { useSearchParams, useRouter } from "next/navigation";
 import { LoginForm } from "@/components/login-form";
 import { SignUpForm } from "@/components/signup-form";
 import { ForgotPasswordForm } from "@/components/forgot-password-form";
+import { AdminLoginForm } from "@/components/admin-login-form";
 import { Dashboard } from "@/components/dashboard";
 import { useAuth } from "@/lib/auth-context";
 
@@ -12,9 +13,9 @@ function AuthPageContent() {
   const { isAuthenticated, isLoading } = useAuth();
   const searchParams = useSearchParams();
   const router = useRouter();
-  const [currentView, setCurrentView] = useState<"login" | "signup" | "forgot">(
-    "login"
-  );
+  const [currentView, setCurrentView] = useState<
+    "login" | "signup" | "forgot" | "admin"
+  >("login");
 
   // Handle URL parameters for authentication views
   useEffect(() => {
@@ -23,6 +24,8 @@ function AuthPageContent() {
       setCurrentView("signup");
     } else if (view === "forgot-password") {
       setCurrentView("forgot");
+    } else if (view === "admin") {
+      setCurrentView("admin");
     } else {
       setCurrentView("login");
     }
@@ -53,6 +56,17 @@ function AuthPageContent() {
     );
   }
 
+  if (currentView === "admin") {
+    return (
+      <AdminLoginForm
+        onBackToLoginClick={() => setCurrentView("login")}
+        onLoginSuccess={() => {
+          // Admin login success is handled by the auth context
+        }}
+      />
+    );
+  }
+
   return (
     <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
       <div className="w-full max-w-md">
@@ -60,6 +74,7 @@ function AuthPageContent() {
           <LoginForm
             onSignUpClick={() => setCurrentView("signup")}
             onForgotPasswordClick={() => setCurrentView("forgot")}
+            onAdminLoginClick={() => setCurrentView("admin")}
             onLoginSuccess={() => {
               // Login success is handled by the auth context
               // No need to manually change view

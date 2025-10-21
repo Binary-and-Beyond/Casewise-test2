@@ -266,7 +266,7 @@ export function InteractiveMCQQuestion({
                   </div>
 
                   <div className="flex space-x-2">
-                    {attempts < 3 && (
+                    {attempts <= 3 && (
                       <button
                         onClick={handleExplain}
                         className="text-sm bg-blue-600 hover:bg-blue-700 text-white px-3 py-1 rounded"

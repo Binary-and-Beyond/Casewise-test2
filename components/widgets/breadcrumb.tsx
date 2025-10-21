@@ -6,9 +6,10 @@ interface BreadcrumbProps {
     onClick?: () => void;
     isActive?: boolean;
   }>;
+  onNavigationAttempt?: (navigationFunction: () => void) => void;
 }
 
-export function Breadcrumb({ items }: BreadcrumbProps) {
+export function Breadcrumb({ items, onNavigationAttempt }: BreadcrumbProps) {
   return (
     <div className="text-sm text-gray-600 mb-4">
       {items.map((item, index) => (
@@ -18,7 +19,15 @@ export function Breadcrumb({ items }: BreadcrumbProps) {
             className={`cursor-pointer hover:text-blue-600 ${
               item.isActive ? "text-gray-900" : ""
             }`}
-            onClick={item.onClick}
+            onClick={() => {
+              if (item.onClick) {
+                if (onNavigationAttempt) {
+                  onNavigationAttempt(item.onClick);
+                } else {
+                  item.onClick();
+                }
+              }
+            }}
           >
             {item.label}
           </span>
