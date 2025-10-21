@@ -1851,59 +1851,47 @@ Patient requires immediate intervention. Door-to-balloon time should be less tha
 Note: This is sample medical content for testing purposes. In a real scenario, this would be extracted from the actual PDF document."""
                 print(f" PDF file processed with enhanced fallback content: {len(content_str)} characters")
         elif file.content_type in ["application/msword", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"]:
-            # For Word documents, we'll store enhanced sample medical content for testing
-            content_str = f"""Medical Case Study - {file.filename}
-
-CASE OVERVIEW:
-This document contains a comprehensive medical case study focusing on respiratory pathology and differential diagnosis.
-
-PATIENT INFORMATION:
-A 45-year-old female presents with progressive shortness of breath and persistent cough over the past 3 weeks.
-
-CLINICAL PRESENTATION:
-- Chief complaint: Dyspnea on exertion and dry cough
-- Duration: 3 weeks, progressively worsening
-- Associated symptoms: Fatigue, mild chest discomfort
-- No fever, weight loss, or night sweats
-
-PAST MEDICAL HISTORY:
-- No significant past medical history
-- No known allergies
-- Non-smoker
-- No occupational exposures
-
-PHYSICAL EXAMINATION:
-- Vital signs: Stable, mild tachypnea
-- Respiratory: Bilateral fine crackles, reduced air entry at bases
-- Cardiovascular: Regular rhythm, no murmurs
-- Other systems: Unremarkable
-
-DIAGNOSTIC WORKUP:
-- Chest X-ray: Bilateral lower lobe infiltrates
-- CT chest: Ground-glass opacities
-- Pulmonary function tests: Restrictive pattern
-- Blood work: Elevated inflammatory markers
-
-DIFFERENTIAL DIAGNOSIS:
-1. Interstitial lung disease
-2. Pneumonia (atypical)
-3. Pulmonary edema
-4. Drug-induced lung injury
-
-MANAGEMENT APPROACH:
-- Further imaging and bronchoscopy
-- Corticosteroid trial
-- Supportive care
-- Specialist referral
-
-LEARNING OBJECTIVES:
-- Understanding of interstitial lung disease
-- Differential diagnosis of dyspnea
-- Interpretation of imaging studies
-- Management of respiratory conditions
-
-Note: This is sample content for Word document testing. In production, implement proper document parsing with python-docx."""
-            print(f" Word document processed with sample content: {len(content_str)} characters")
+            # Process Word documents (DOC and DOCX)
+            try:
+                if file.content_type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
+                    # DOCX file processing
+                    import docx
+                    doc = docx.Document(io.BytesIO(content))
+                    content_str = ""
+                    
+                    for paragraph in doc.paragraphs:
+                        if paragraph.text.strip():
+                            content_str += paragraph.text + "\n"
+                    
+                    # Also extract text from tables
+                    for table in doc.tables:
+                        for row in table.rows:
+                            for cell in row.cells:
+                                if cell.text.strip():
+                                    content_str += cell.text + " "
+                            content_str += "\n"
+                    
+                    if not content_str.strip():
+                        content_str = f"DOCX file: {file.filename}\n\nNote: This DOCX file could not be processed for text extraction. Please ensure the document contains readable text."
+                    
+                    print(f" DOCX processed: {len(content_str)} characters extracted")
+                    
+                elif file.content_type == "application/msword":
+                    # DOC file processing using docx2txt
+                    import docx2txt
+                    content_str = docx2txt.process(io.BytesIO(content))
+                    
+                    if not content_str.strip():
+                        content_str = f"DOC file: {file.filename}\n\nNote: This DOC file could not be processed for text extraction. Please ensure the document contains readable text."
+                    
+                    print(f" DOC processed: {len(content_str)} characters extracted")
+                    
+            except ImportError as e:
+                print(f" Missing library for Word document processing: {e}")
+                content_str = f"Word document: {file.filename}\n\nError: Required libraries for Word document processing are not installed. Please install python-docx and docx2txt."
+            except Exception as e:
+                print(f" Error processing Word document: {e}")
+                content_str = f"Word document: {file.filename}\n\nError: Could not extract text from Word document. Please ensure the file is not corrupted and contains readable text."
         else:
             content_str = f"Document: {file.filename}. Content type: {file.content_type}. Please use text files for full functionality."
             print(f" Unsupported file type processed with placeholder content")
@@ -2013,6 +2001,71 @@ async def upload_document_enhanced(
             else:
                 # Fallback content
                 content_str = f"PDF file: {file.filename}\n\nPDF processing library not available."
+                
+        elif file.content_type in ["application/msword", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"]:
+            # Process Word documents (DOC and DOCX) with enhanced processing
+            try:
+                if file.content_type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
+                    # DOCX file processing
+                    import docx
+                    doc = docx.Document(io.BytesIO(content))
+                    content_str = ""
+                    
+                    for paragraph in doc.paragraphs:
+                        if paragraph.text.strip():
+                            content_str += paragraph.text + "\n"
+                    
+                    # Also extract text from tables
+                    for table in doc.tables:
+                        for row in table.rows:
+                            for cell in row.cells:
+                                if cell.text.strip():
+                                    content_str += cell.text + " "
+                            content_str += "\n"
+                    
+                    if not content_str.strip():
+                        content_str = f"DOCX file: {file.filename}\n\nNote: This DOCX file could not be processed for text extraction. Please ensure the document contains readable text."
+                    
+                    print(f" Enhanced DOCX processed: {len(content_str)} characters extracted")
+                    
+                elif file.content_type == "application/msword":
+                    # DOC file processing using python-docx2txt
+                    import docx2txt
+                    content_str = docx2txt.process(io.BytesIO(content))
+                    
+                    if not content_str.strip():
+                        content_str = f"DOC file: {file.filename}\n\nNote: This DOC file could not be processed for text extraction. Please ensure the document contains readable text."
+                    
+                    print(f" Enhanced DOC processed: {len(content_str)} characters extracted")
+                    
+                # For Word documents, we can also try to detect cases and MCQs
+                if content_str and len(content_str) > 100:  # Only if we have substantial content
+                    # Simple case detection for Word documents
+                    case_indicators = ["case study", "patient", "diagnosis", "treatment", "symptoms", "medical history"]
+                    mcq_indicators = ["question", "answer", "option", "a)", "b)", "c)", "d)", "multiple choice"]
+                    
+                    has_cases = any(indicator.lower() in content_str.lower() for indicator in case_indicators)
+                    has_mcqs = any(indicator.lower() in content_str.lower() for indicator in mcq_indicators)
+                    
+                    extraction_metadata = {
+                        "has_cases": has_cases,
+                        "has_mcqs": has_mcqs,
+                        "detected_cases_count": 1 if has_cases else 0,
+                        "detected_mcqs_count": 1 if has_mcqs else 0,
+                        "word_document_processed": True
+                    }
+                    
+                    print(f" Enhanced Word document analysis:")
+                    print(f"   - Cases detected: {has_cases}")
+                    print(f"   - MCQs detected: {has_mcqs}")
+                    print(f"   - Characters extracted: {len(content_str)}")
+                    
+            except ImportError as e:
+                print(f" Missing library for Word document processing: {e}")
+                content_str = f"Word document: {file.filename}\n\nError: Required libraries for Word document processing are not installed. Please install python-docx and docx2txt."
+            except Exception as e:
+                print(f" Error processing Word document: {e}")
+                content_str = f"Word document: {file.filename}\n\nError: Could not extract text from Word document. Please ensure the file is not corrupted and contains readable text."
                 
     except Exception as e:
         print(f" Error reading file: {str(e)}")
