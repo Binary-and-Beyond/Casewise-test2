@@ -112,10 +112,30 @@ export function Dashboard({}: DashboardProps) {
     | "chatbot-flow"
   >(getCurrentView());
 
-  // Sync currentView with pathname changes
+  // Sync currentView with pathname changes and extract concept ID
   useEffect(() => {
     const newView = getCurrentView();
     setCurrentView(newView);
+
+    // Extract concept ID from URL if we're on a concept detail page
+    if (
+      pathname.startsWith("/dashboard/concepts/") &&
+      pathname !== "/dashboard/concepts"
+    ) {
+      const conceptId = pathname.split("/dashboard/concepts/")[1];
+      if (conceptId) {
+        // Convert concept ID back to readable format
+        const conceptName = conceptId
+          .split("-")
+          .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+          .join(" ");
+        console.log("🎯 Extracted concept from URL:", conceptName);
+        setSelectedConcept(conceptName);
+
+        // Also save to localStorage for persistence
+        localStorage.setItem("selected_concept", conceptName);
+      }
+    }
   }, [pathname]);
 
   const [selectedCase, setSelectedCase] = useState<string>(() => {
@@ -2588,7 +2608,12 @@ export function Dashboard({}: DashboardProps) {
       localStorage.setItem("selected_concept", concept);
 
       // Navigate to the specific concept route
-      const conceptId = concept.toLowerCase().replace(/\s+/g, "-");
+      const conceptId = concept
+        .toLowerCase()
+        .replace(/[^a-z0-9\s-]/g, "") // Remove special characters except spaces and hyphens
+        .replace(/\s+/g, "-") // Replace spaces with hyphens
+        .replace(/-+/g, "-") // Replace multiple hyphens with single hyphen
+        .replace(/^-|-$/g, ""); // Remove leading/trailing hyphens
       console.log("🔄 Navigating to concept:", conceptId);
       router.push(`/dashboard/concepts/${conceptId}`);
     } catch (error) {
@@ -3318,8 +3343,25 @@ export function Dashboard({}: DashboardProps) {
   const renderConceptDetail = () => {
     // If no chats exist, redirect to main view
     if (chats.length === 0) {
+      console.log(
+        "🎯 No chats available for concept detail, redirecting to main"
+      );
       navigateToView("main");
       return null;
+    }
+
+    // If no active chat, set the first chat as active
+    if (!activeChat && chats.length > 0) {
+      console.log("🎯 No active chat, setting first chat as active");
+      setActiveChat(chats[0].id);
+      return (
+        <div className="flex items-center justify-center h-full min-h-screen">
+          <div className="text-center">
+            <div className="animate-spin rounded-full h-8 w-8 border-4 border-blue-500 border-t-transparent mx-auto mb-4"></div>
+            <p className="text-gray-600">Loading chat...</p>
+          </div>
+        </div>
+      );
     }
 
     return (
@@ -3355,7 +3397,7 @@ export function Dashboard({}: DashboardProps) {
 
         <div className="flex-1 flex flex-col">
           {/* Concept Detail Card */}
-          <div className="bg-white border border-gray-200 rounded-lg p-6 mb-6 flex-1">
+          <div className="bg-white border border-gray-200 rounded-lg p-6 mb-6">
             <h3 className="text-xl font-semibold text-gray-900 mb-4">
               {selectedConcept}
             </h3>
@@ -3391,6 +3433,29 @@ export function Dashboard({}: DashboardProps) {
                   </ul>
                 </div>
               </div>
+            </div>
+          </div>
+
+          {/* AI Chat Section */}
+          <div className="bg-white border border-gray-200 rounded-lg flex-1 flex flex-col">
+            <div className="p-4 border-b border-gray-200">
+              <h3 className="text-lg font-semibold text-gray-900">
+                Ask about {selectedConcept}
+              </h3>
+              <p className="text-sm text-gray-600">
+                Chat with AI to learn more about this concept
+              </p>
+            </div>
+            <div className="flex-1 min-h-[400px]">
+              {activeChat && (
+                <AIChat
+                  chatId={activeChat}
+                  documentId={
+                    chats.find((chat) => chat.id === activeChat)?.document_id
+                  }
+                  caseTitle={selectedCase}
+                />
+              )}
             </div>
           </div>
         </div>
