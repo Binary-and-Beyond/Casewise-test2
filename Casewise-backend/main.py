@@ -340,6 +340,7 @@ class UserLogin(BaseModel):
     """Schema for user login"""
     email: EmailStr
     password: str
+    remember_me: Optional[bool] = False
 
 class GoogleAuthRequest(BaseModel):
     """Schema for Google OAuth authentication"""
@@ -599,7 +600,7 @@ def create_notification(user_id: str, notification_type: str, title: str, messag
             "title": title,
             "message": message,
             "is_read": False,
-            "created_at": datetime.utcnow(),
+            "created_at": datetime.utcnow().isoformat() + "Z",
             "metadata": metadata or {}
         }
         
@@ -1028,9 +1029,11 @@ def login(user_credentials: UserLogin):
             print(" User inactive")
             raise HTTPException(status_code=400, detail="Inactive user")
         
-        # Create access token
-        access_token = create_access_token(data={"sub": str(user["_id"])})
-        print(" Login successful - token created")
+        # Create access token with different expiration based on remember_me
+        # If remember_me is True, token expires in 30 days, otherwise 24 hours
+        expires_delta = timedelta(days=30) if user_credentials.remember_me else timedelta(hours=24)
+        access_token = create_access_token(data={"sub": str(user["_id"])}, expires_delta=expires_delta)
+        print(f" Login successful - token created (remember_me: {user_credentials.remember_me}, expires: {expires_delta})")
         
         return {
             "access_token": access_token,
@@ -1316,21 +1319,55 @@ def get_all_users(current_user: dict = Depends(get_current_user)):
             # Get analytics data for each user
             analytics = user.get("analytics", {})
             
+            # Count documents uploaded by user
+            cases_uploaded = db.documents.count_documents({"uploaded_by": str(user["_id"])})
+            
+            # Get MCQ statistics from user document (direct fields, not analytics)
+            mcq_attempted = user.get("mcq_attempted", 0)
+            total_questions_correct = user.get("total_questions_correct", 0)
+            total_questions_attempted = user.get("total_questions_attempted", 0)
+            
+            # Get chat sessions to calculate time spent
+            chat_count = db.chats.count_documents({"user_id": str(user["_id"])})
+            
+            # Calculate time spent (simplified)
+            time_spent_minutes = chat_count * 5  # Assume 5 minutes per chat session
+            if time_spent_minutes < 60:
+                time_spent = f"{time_spent_minutes} mins"
+            else:
+                hours = time_spent_minutes // 60
+                minutes = time_spent_minutes % 60
+                time_spent = f"{hours}h {minutes}m"
+            
+            # Calculate average score
+            average_score = 0
+            if total_questions_attempted > 0:
+                average_score = int((total_questions_correct / total_questions_attempted) * 100)
+            
+            # Get last active date
+            last_active_date = user.get("updated_at", user.get("created_at", datetime.now()))
+            if isinstance(last_active_date, datetime):
+                last_active_date = last_active_date.strftime("%Y-%m-%d")
+            else:
+                last_active_date = datetime.now().strftime("%Y-%m-%d")
+            
             user_data = {
                 "id": str(user["_id"]),
                 "email": user["email"],
                 "username": user["username"],
                 "full_name": user.get("full_name"),
                 "role": user.get("role", "user"),
-                "status": "active" if user.get("is_active", True) else "inactive",
                 "created_at": user["created_at"].strftime("%Y-%m-%d") if user.get("created_at") else "N/A",
-                "last_active": analytics.get("last_active", "N/A"),
-                "time_spent": analytics.get("time_spent", "0 mins"),
-                "cases_uploaded": analytics.get("cases_uploaded", 0),
-                "mcq_attempted": analytics.get("mcq_attempted", 0),
-                "most_questions_type": analytics.get("most_questions_type", "Easy"),
-                "total_cases": analytics.get("cases_uploaded", 0),
-                "total_mcqs": analytics.get("mcq_attempted", 0)
+                "last_active": last_active_date,
+                "time_spent": time_spent,
+                "cases_uploaded": cases_uploaded,
+                "mcq_attempted": mcq_attempted,
+                "most_questions_type": "Easy",  # Placeholder
+                "total_cases": cases_uploaded,
+                "total_mcqs": mcq_attempted,
+                "total_questions_correct": total_questions_correct,
+                "total_questions_attempted": total_questions_attempted,
+                "average_score": average_score
             }
             users.append(user_data)
         
@@ -1599,11 +1636,16 @@ async def get_notifications(
         
         notification_list = []
         for notification in notifications:
-            # Convert MongoDB datetime to ISO string
+            # Handle both datetime objects and ISO strings
             created_at = notification["created_at"]
-            if hasattr(created_at, 'isoformat'):
+            if isinstance(created_at, str):
+                # Already an ISO string
+                created_at_str = created_at
+            elif hasattr(created_at, 'isoformat'):
+                # Convert datetime to ISO string
                 created_at_str = created_at.isoformat()
             else:
+                # Fallback to string representation
                 created_at_str = str(created_at)
             
             notification_list.append({
@@ -2063,6 +2105,20 @@ Note: This is sample medical content for testing purposes. In a real scenario, t
     document_id = str(result.inserted_id)
     
     print(f" Document stored successfully with ID: {document_id}")
+    
+    # Create notification for file upload
+    create_notification(
+        user_id=current_user["id"],
+        notification_type="file_upload",
+        title="Document Uploaded",
+        message=f"Your document '{file.filename}' has been successfully uploaded and processed.",
+        metadata={
+            "document_id": document_id,
+            "filename": file.filename,
+            "file_size": len(content),
+            "content_type": file.content_type
+        }
+    )
     
     # Return response
     document_doc["id"] = document_id

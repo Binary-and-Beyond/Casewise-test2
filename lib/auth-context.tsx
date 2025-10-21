@@ -13,8 +13,16 @@ interface AuthContextType {
   user: User | null;
   token: string | null;
   isLoading: boolean;
-  login: (email: string, password: string) => Promise<void>;
-  adminLogin: (email: string, password: string) => Promise<void>;
+  login: (
+    email: string,
+    password: string,
+    rememberMe?: boolean
+  ) => Promise<void>;
+  adminLogin: (
+    email: string,
+    password: string,
+    rememberMe?: boolean
+  ) => Promise<void>;
   signup: (
     email: string,
     username: string,
@@ -86,11 +94,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  const login = async (email: string, password: string) => {
+  const login = async (
+    email: string,
+    password: string,
+    rememberMe: boolean = false
+  ) => {
     try {
       const response: AuthResponse = await apiService.login({
         email,
         password,
+        remember_me: rememberMe,
       });
 
       // Store token
@@ -105,11 +118,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  const adminLogin = async (email: string, password: string) => {
+  const adminLogin = async (
+    email: string,
+    password: string,
+    rememberMe: boolean = false
+  ) => {
     try {
       const response: AuthResponse = await apiService.adminLogin({
         email,
         password,
+        remember_me: rememberMe,
       });
 
       // Store token

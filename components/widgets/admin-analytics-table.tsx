@@ -5,13 +5,12 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { apiService } from "@/lib/api";
 
-interface User {
+interface AdminUser {
   id: string;
   email: string;
   username: string;
   full_name?: string;
   role: string;
-  status: string;
   time_spent: string;
   cases_uploaded: number;
   mcq_attempted: number;
@@ -20,6 +19,9 @@ interface User {
   last_active: string;
   total_cases: number;
   total_mcqs: number;
+  total_questions_correct?: number;
+  total_questions_attempted?: number;
+  average_score?: number;
 }
 
 interface AdminAnalyticsTableProps {
@@ -29,7 +31,7 @@ interface AdminAnalyticsTableProps {
 export function AdminAnalyticsTable({
   onManageUsers,
 }: AdminAnalyticsTableProps) {
-  const [users, setUsers] = useState<User[]>([]);
+  const [users, setUsers] = useState<AdminUser[]>([]);
   const [selectedUsers, setSelectedUsers] = useState<Set<string>>(new Set());
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -40,7 +42,7 @@ export function AdminAnalyticsTable({
       setIsLoading(true);
       setError(null);
       const response = await apiService.getAllUsers();
-      setUsers(response.users);
+      setUsers(response.users as AdminUser[]);
     } catch (error) {
       console.error("Failed to fetch users:", error);
       setError("Failed to load user data. Please try again.");
@@ -186,11 +188,9 @@ export function AdminAnalyticsTable({
             </div>
             <div className="ml-6">
               <p className="text-sm font-medium text-gray-600 mb-1">
-                Active Users
+                Total Users
               </p>
-              <p className="text-3xl font-bold text-gray-900">
-                {users.filter((u) => u.last_active >= "2024-01-20").length}
-              </p>
+              <p className="text-3xl font-bold text-gray-900">{users.length}</p>
             </div>
           </div>
         </div>

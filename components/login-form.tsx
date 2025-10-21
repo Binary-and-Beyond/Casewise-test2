@@ -109,7 +109,7 @@ export function LoginForm({
     setError("");
 
     try {
-      await login(email, password);
+      await login(email, password, rememberMe);
       onLoginSuccess();
     } catch (error) {
       setError(error instanceof Error ? error.message : "Login failed");

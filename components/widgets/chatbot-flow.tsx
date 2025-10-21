@@ -63,6 +63,7 @@ export function ChatbotFlow({ document, onBack }: ChatbotFlowProps) {
   const [mcqQuestions, setMCQQuestions] = useState<MCQQuestion[]>(() => {
     if (typeof window !== "undefined") {
       try {
+        // Try document-specific key first
         const cachedMCQs = localStorage.getItem(`mcq_questions_${document.id}`);
         if (cachedMCQs) {
           const parsedMCQs = JSON.parse(cachedMCQs);
@@ -73,6 +74,33 @@ export function ChatbotFlow({ document, onBack }: ChatbotFlowProps) {
             "questions"
           );
           return parsedMCQs;
+        }
+
+        // Try to load from global storage and extract questions for this document
+        const globalMCQs = localStorage.getItem("mcq_questions");
+        if (globalMCQs) {
+          const parsedGlobalMCQs = JSON.parse(globalMCQs);
+          // If it's an object with case titles as keys, get the first available questions
+          if (
+            typeof parsedGlobalMCQs === "object" &&
+            !Array.isArray(parsedGlobalMCQs)
+          ) {
+            const firstCaseQuestions = Object.values(
+              parsedGlobalMCQs
+            )[0] as MCQQuestion[];
+            if (
+              Array.isArray(firstCaseQuestions) &&
+              firstCaseQuestions.length > 0
+            ) {
+              console.log(
+                "🚀 Loaded MCQ questions from global storage for document:",
+                document.id,
+                firstCaseQuestions.length,
+                "questions"
+              );
+              return firstCaseQuestions;
+            }
+          }
         }
       } catch (e) {
         console.log("❌ Failed to parse cached MCQ questions on init:", e);
@@ -124,10 +152,28 @@ export function ChatbotFlow({ document, onBack }: ChatbotFlowProps) {
   useEffect(() => {
     if (typeof window !== "undefined" && mcqQuestions.length > 0) {
       try {
+        // Save to document-specific key
         localStorage.setItem(
           `mcq_questions_${document.id}`,
           JSON.stringify(mcqQuestions)
         );
+
+        // Also save to global storage for dashboard compatibility
+        const globalMCQs = localStorage.getItem("mcq_questions");
+        let globalMCQData: Record<string, MCQQuestion[]> = {};
+
+        if (globalMCQs) {
+          try {
+            globalMCQData = JSON.parse(globalMCQs);
+          } catch (e) {
+            console.log("❌ Failed to parse existing global MCQs:", e);
+          }
+        }
+
+        // Add current questions to global storage (use document ID as key)
+        globalMCQData[`doc_${document.id}`] = mcqQuestions;
+        localStorage.setItem("mcq_questions", JSON.stringify(globalMCQData));
+
         console.log(
           "💾 Saved MCQ questions to localStorage for document:",
           document.id,
@@ -221,9 +267,12 @@ export function ChatbotFlow({ document, onBack }: ChatbotFlowProps) {
     }
   };
 
-  const handleCaseSelect = (caseId: string, caseTitle: string) => {
+  const handleCaseSelect = async (caseId: string, caseTitle: string) => {
     setSelectedCase({ id: caseId, title: caseTitle });
     setCurrentStep("case-options");
+
+    // Automatically generate MCQs for the selected case
+    await handleGenerateMCQs();
   };
 
   const handleGenerateMCQs = async (retryCount = 0) => {

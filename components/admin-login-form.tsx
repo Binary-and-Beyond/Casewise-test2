@@ -6,6 +6,7 @@ import Image from "next/image";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Checkbox } from "@/components/ui/checkbox";
 import { useAuth } from "@/lib/auth-context";
 import { BiHide, BiShow } from "react-icons/bi";
 
@@ -20,7 +21,9 @@ export function AdminLoginForm({
 }: AdminLoginFormProps) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [rememberMe, setRememberMe] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+  const [passwordFocused, setPasswordFocused] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState("");
 
@@ -32,7 +35,7 @@ export function AdminLoginForm({
     setError("");
 
     try {
-      await adminLogin(email, password);
+      await adminLogin(email, password, rememberMe);
       onLoginSuccess();
     } catch (error) {
       setError(error instanceof Error ? error.message : "Admin login failed");
@@ -57,9 +60,6 @@ export function AdminLoginForm({
         <h1 className="text-2xl font-semibold text-gray-900 text-left">
           Admin Login
         </h1>
-        <p className="text-sm text-gray-600 text-left mt-2">
-          Access the admin dashboard to manage users and analytics
-        </p>
       </div>
 
       {error && (
@@ -74,12 +74,12 @@ export function AdminLoginForm({
             htmlFor="admin-email"
             className="text-sm font-medium text-gray-700"
           >
-            Admin Email
+            Email Address
           </Label>
           <Input
             id="admin-email"
             type="email"
-            placeholder="admin@casewise.com"
+            placeholder="Email"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             className="h-11 bg-gray-100 border-0 rounded-md"
@@ -92,17 +92,23 @@ export function AdminLoginForm({
             htmlFor="admin-password"
             className="text-sm font-medium text-gray-700"
           >
-            Admin Password
+            Password
           </Label>
           <div className="relative">
             <Input
               id="admin-password"
               type={showPassword ? "text" : "password"}
-              placeholder="Admin Password"
+              placeholder="Password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              onFocus={() => setShowPassword(false)}
-              onBlur={() => setShowPassword(false)}
+              onFocus={() => {
+                setPasswordFocused(false);
+                setShowPassword(false); // Show password when first focused
+              }}
+              onBlur={() => {
+                setPasswordFocused(false);
+                setShowPassword(false); // Hide password when losing focus
+              }}
               required
               className="h-11 bg-gray-100 border-0 rounded-md pr-10"
             />
@@ -124,35 +130,54 @@ export function AdminLoginForm({
           </div>
         </div>
 
+        <div className="flex items-center justify-between py-2">
+          <div className="flex items-center space-x-2">
+            <Checkbox
+              id="admin-remember"
+              checked={rememberMe}
+              onCheckedChange={(checked) => setRememberMe(checked as boolean)}
+            />
+            <Label htmlFor="admin-remember" className="text-sm text-gray-600">
+              Remember me
+            </Label>
+          </div>
+          <button
+            type="button"
+            className="text-sm text-gray-600 hover:text-gray-800"
+          >
+            Forgot Password?
+          </button>
+        </div>
+
         <Button
           type="submit"
           disabled={isLoading}
-          className="w-full h-12 bg-red-600 hover:bg-red-700 text-white font-medium rounded-md disabled:opacity-50"
+          className="w-full h-12 bg-gray-700 hover:bg-gray-800 text-white font-medium rounded-md disabled:opacity-50"
         >
-          {isLoading ? "Signing in..." : "Admin Login"}
+          {isLoading ? "Logging in..." : "Log In"}
         </Button>
       </form>
 
-      <div className="mt-6 text-center">
-        <p className="text-sm text-gray-600">
-          Regular user?{" "}
-          <button
-            onClick={onBackToLoginClick}
-            className="text-blue-600 hover:underline"
-          >
-            Back to User Login
-          </button>
-        </p>
+      <div className="mt-6 space-y-3">
+        <div className="flex justify-center">
+          <div className="relative w-full max-w-xs">
+            <div id="google-signin-button" className="w-full h-12"></div>
+            {isLoading && (
+              <div className="absolute inset-0 flex items-center justify-center bg-white bg-opacity-75 rounded border">
+                <span className="text-sm text-gray-600">Signing in...</span>
+              </div>
+            )}
+          </div>
+        </div>
       </div>
 
-      <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded-md">
-        <p className="text-xs text-blue-800">
-          <strong>Demo Admin Credentials:</strong>
-          <br />
-          Email: admin@casewise.com
-          <br />
-          Password: admin123
-        </p>
+      <div className="mt-4 text-center">
+        <button
+          onClick={onBackToLoginClick}
+          className="text-sm text-gray-500 hover:text-gray-700 underline"
+        >
+          User Login
+        </button>
       </div>
     </div>
   );

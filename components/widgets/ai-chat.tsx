@@ -11,6 +11,7 @@ import {
   isValidTimestamp,
 } from "@/lib/timestamp-utils";
 import Image from "next/image";
+import { UserAvatar } from "@/components/ui/user-avatar";
 
 interface LocalChatMessage {
   id: string;
@@ -316,32 +317,25 @@ export function AIChat({
               } items-start gap-3 max-w-[80%]`}
             >
               {/* Profile Picture */}
-              <div className="w-8 h-8 rounded-full overflow-hidden flex-shrink-0">
+              <div className="flex-shrink-0">
                 {message.type === "user" ? (
-                  user?.profile_image_url ? (
-                    <Image
-                      src={user.profile_image_url}
-                      alt="User"
-                      width={32}
-                      height={32}
-                      className="w-full h-full object-cover"
-                    />
-                  ) : (
-                    <div className="w-full h-full bg-blue-500 flex items-center justify-center">
-                      <span className="text-white text-sm font-medium">
-                        {user?.full_name?.charAt(0) ||
-                          user?.username?.charAt(0) ||
-                          "U"}
-                      </span>
-                    </div>
-                  )
+                  <UserAvatar
+                    src={user?.profile_image_url}
+                    alt="User"
+                    size={32}
+                    fallbackText={
+                      user?.full_name?.charAt(0) ||
+                      user?.username?.charAt(0) ||
+                      "U"
+                    }
+                  />
                 ) : (
                   <Image
                     src="/casewise_Icon.svg"
                     alt="AI"
                     width={32}
                     height={32}
-                    className="w-full h-full object-cover"
+                    className="w-8 h-8 rounded-full object-cover"
                   />
                 )}
               </div>

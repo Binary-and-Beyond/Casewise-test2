@@ -3,6 +3,7 @@ import { useState, useEffect } from "react";
 import { apiService } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
 import Image from "next/image";
+import { UserAvatar } from "@/components/ui/user-avatar";
 
 interface Chat {
   id: string;
@@ -248,30 +249,15 @@ export function Sidebar({
             onClick={() => setShowProfileDropdown(!showProfileDropdown)}
             className="flex items-center w-full p-2 rounded-lg hover:bg-gray-100"
           >
-            <div className="w-8 h-8 bg-gray-300 rounded-full mr-3 overflow-hidden">
-              {user?.profile_image_url ? (
-                <Image
-                  src={user.profile_image_url}
-                  alt="Profile"
-                  width={32}
-                  height={32}
-                  className="w-full h-full object-cover"
-                />
-              ) : (
-                <div className="w-full h-full bg-gray-300 rounded-full flex items-center justify-center">
-                  <svg
-                    className="w-4 h-4 text-gray-500"
-                    fill="currentColor"
-                    viewBox="0 0 20 20"
-                  >
-                    <path
-                      fillRule="evenodd"
-                      d="M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z"
-                      clipRule="evenodd"
-                    />
-                  </svg>
-                </div>
-              )}
+            <div className="mr-3">
+              <UserAvatar
+                src={user?.profile_image_url}
+                alt="Profile"
+                size={32}
+                fallbackText={
+                  user?.username?.charAt(0) || user?.full_name?.charAt(0) || "U"
+                }
+              />
             </div>
             <div className="flex-1 text-left min-w-0">
               <p className="text-sm font-medium text-gray-900 truncate">

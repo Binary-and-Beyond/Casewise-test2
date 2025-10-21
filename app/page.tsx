@@ -52,18 +52,28 @@ function AuthPageContent() {
   // Show authentication forms for non-authenticated users
   if (currentView === "forgot") {
     return (
-      <ForgotPasswordForm onBackToLoginClick={() => setCurrentView("login")} />
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
+        <div className="w-full max-w-md">
+          <ForgotPasswordForm
+            onBackToLoginClick={() => setCurrentView("login")}
+          />
+        </div>
+      </div>
     );
   }
 
   if (currentView === "admin") {
     return (
-      <AdminLoginForm
-        onBackToLoginClick={() => setCurrentView("login")}
-        onLoginSuccess={() => {
-          // Admin login success is handled by the auth context
-        }}
-      />
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
+        <div className="w-full max-w-md">
+          <AdminLoginForm
+            onBackToLoginClick={() => setCurrentView("login")}
+            onLoginSuccess={() => {
+              // Admin login success is handled by the auth context
+            }}
+          />
+        </div>
+      </div>
     );
   }
 

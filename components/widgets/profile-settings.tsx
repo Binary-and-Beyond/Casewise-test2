@@ -5,6 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useAuth } from "@/lib/auth-context";
 import { apiService } from "@/lib/api";
+import { UserAvatar } from "@/components/ui/user-avatar";
 
 interface ProfileSettingsProps {
   onBack: () => void;
@@ -188,27 +189,16 @@ export function ProfileSettings({ onBack }: ProfileSettingsProps) {
             <div className="flex items-start space-x-6">
               {/* Avatar */}
               <div className="flex-shrink-0">
-                <div className="w-20 h-20 bg-gray-300 rounded-full flex items-center justify-center overflow-hidden">
-                  {imagePreview ? (
-                    <img
-                      src={imagePreview}
-                      alt="Profile preview"
-                      className="w-full h-full object-cover"
-                    />
-                  ) : (
-                    <svg
-                      className="w-8 h-8 text-gray-500"
-                      fill="currentColor"
-                      viewBox="0 0 20 20"
-                    >
-                      <path
-                        fillRule="evenodd"
-                        d="M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z"
-                        clipRule="evenodd"
-                      />
-                    </svg>
-                  )}
-                </div>
+                <UserAvatar
+                  src={imagePreview || undefined}
+                  alt="Profile preview"
+                  size={80}
+                  fallbackText={
+                    user?.full_name?.charAt(0) ||
+                    user?.username?.charAt(0) ||
+                    "U"
+                  }
+                />
               </div>
 
               {/* Upload Section */}

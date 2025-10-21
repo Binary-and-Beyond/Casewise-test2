@@ -21,6 +21,7 @@ export interface User {
 export interface LoginRequest {
   email: string;
   password: string;
+  remember_me?: boolean;
 }
 
 export interface SignupRequest {
@@ -453,14 +454,14 @@ class ApiService {
     return this.handleResponse<User>(response);
   }
 
-  async getAllUsers(): Promise<{ users: User[] }> {
+  async getAllUsers(): Promise<{ users: any[] }> {
     const response = await fetch(`${API_BASE_URL}/admin/users`, {
       method: "GET",
       headers: this.getHeaders(),
       mode: "cors",
       credentials: "include",
     });
-    return this.handleResponse<{ users: User[] }>(response);
+    return this.handleResponse<{ users: any[] }>(response);
   }
 
   // Document endpoints

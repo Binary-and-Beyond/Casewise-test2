@@ -70,14 +70,19 @@ export function Notifications({ onBack }: NotificationsProps) {
       setError(null);
       const data = await apiService.getNotifications(50, false);
       console.log("Loaded notifications:", data.length, "notifications");
-      // Debug: log the first notification's timestamp
+      // Debug: log the first few notifications' timestamps
       if (data.length > 0) {
-        console.log(
-          "First notification timestamp:",
-          data[0].created_at,
-          "formatted:",
-          formatTimeAgo(data[0].created_at)
-        );
+        console.log("=== NOTIFICATION TIMESTAMPS DEBUG ===");
+        data.slice(0, 3).forEach((notification, index) => {
+          console.log(`Notification ${index + 1}:`, {
+            id: notification.id,
+            title: notification.title,
+            created_at: notification.created_at,
+            formatted: formatTimeAgo(notification.created_at),
+            raw_date: new Date(notification.created_at),
+          });
+        });
+        console.log("=== END DEBUG ===");
       }
       setNotifications(data);
     } catch (err: any) {
