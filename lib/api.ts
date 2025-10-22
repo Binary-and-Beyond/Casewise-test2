@@ -203,6 +203,33 @@ export interface UserAnalytics {
 }
 
 class ApiService {
+  private async fetchWithTimeout(
+    input: RequestInfo | URL,
+    init: RequestInit,
+    timeoutMs: number
+  ): Promise<Response> {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      // If caller already passed a signal, prefer theirs (do not override)
+      const response = await fetch(input, {
+        ...init,
+        signal: init.signal ?? controller.signal,
+      });
+      return response;
+    } catch (error: any) {
+      if (
+        error?.name === "AbortError" ||
+        (typeof error?.message === "string" &&
+          error.message.toLowerCase().includes("aborted"))
+      ) {
+        throw new Error("Request timed out. Please try again.");
+      }
+      throw error;
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  }
   private getAuthToken(): string | null {
     if (typeof window !== "undefined") {
       return localStorage.getItem("auth_token");
@@ -989,18 +1016,23 @@ class ApiService {
     numQuestions: number = 3,
     includeHints: boolean = true
   ): Promise<MCQResponse> {
-    const response = await fetch(`${API_BASE_URL}/ai/generate-mcqs`, {
-      method: "POST",
-      headers: this.getHeaders(),
-      mode: "cors",
-      credentials: "include",
-      body: JSON.stringify({
-        document_id: documentId,
-        case_title: caseTitle,
-        num_questions: numQuestions,
-        include_hints: includeHints,
-      }),
-    });
+    // Apply a client-side timeout to avoid hanging indefinitely on long generations
+    const response = await this.fetchWithTimeout(
+      `${API_BASE_URL}/ai/generate-mcqs`,
+      {
+        method: "POST",
+        headers: this.getHeaders(),
+        mode: "cors",
+        credentials: "include",
+        body: JSON.stringify({
+          document_id: documentId,
+          case_title: caseTitle,
+          num_questions: numQuestions,
+          include_hints: includeHints,
+        }),
+      },
+      60000 // 60s timeout
+    );
     return this.handleResponse<MCQResponse>(response);
   }
 

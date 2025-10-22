@@ -312,16 +312,18 @@ export function ChatbotFlow({ document, onBack }: ChatbotFlowProps) {
         error instanceof Error ? error.message : "Failed to generate MCQs";
       console.error("MCQ generation error:", error);
 
-      // Retry logic - retry up to 2 times
-      if (retryCount < 2) {
+      const isTimeout = errorMessage.toLowerCase().includes("timed out");
+      if (isTimeout) {
+        setError("MCQ generation timed out. Please try again.");
+      } else if (retryCount < 1) {
         console.log(
-          `🔄 Retrying MCQ generation (attempt ${retryCount + 1}/2)...`
+          `🔄 Retrying MCQ generation (attempt ${retryCount + 1}/1)...`
         );
         setTimeout(() => {
           handleGenerateMCQs(retryCount + 1);
-        }, 2000); // Wait 2 seconds before retry
+        }, 2000);
       } else {
-        setError(`${errorMessage} (Failed after 3 attempts)`);
+        setError(`${errorMessage} (Failed after 2 attempts)`);
       }
     } finally {
       setIsLoading(false);

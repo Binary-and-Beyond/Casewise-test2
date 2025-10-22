@@ -331,6 +331,8 @@ export function Dashboard({}: DashboardProps) {
   const [isGeneratingConcepts, setIsGeneratingConcepts] = useState(false);
   const [isGeneratingMCQs, setIsGeneratingMCQs] = useState<string | null>(null);
   const conceptGenerationRef = useRef<boolean>(false);
+  // Track if we've already auto-attempted MCQ generation for a case in this session
+  const mcqAutoAttemptedRef = useRef<Set<string>>(new Set());
 
   // MCQ completion and navigation warning states
   const [showCompletionPopup, setShowCompletionPopup] = useState(false);
@@ -374,6 +376,28 @@ export function Dashboard({}: DashboardProps) {
       localStorage.removeItem("current_view");
     }
   }, []);
+
+  // Auto-generate MCQs when entering the Generate MCQs view with a selected case
+  useEffect(() => {
+    if (currentView !== "generate-mcqs") return;
+    if (!selectedCase) return;
+
+    const hasMCQs =
+      !!mcqQuestions[selectedCase] && mcqQuestions[selectedCase].length > 0;
+
+    if (
+      !hasMCQs &&
+      // ensure we aren't already generating via either flag
+      isGeneratingMCQs !== selectedCase &&
+      !isUploading &&
+      !mcqAutoAttemptedRef.current.has(selectedCase)
+    ) {
+      mcqAutoAttemptedRef.current.add(selectedCase);
+      setIsGeneratingMCQs(selectedCase);
+      // Kick off generation using the existing helper
+      generateMCQsFromDocument();
+    }
+  }, [currentView, selectedCase, mcqQuestions, isGeneratingMCQs, isUploading]);
 
   // Load chats immediately on component mount if available in localStorage
   useEffect(() => {
@@ -1985,6 +2009,8 @@ export function Dashboard({}: DashboardProps) {
       console.error("Case generation error:", error);
     } finally {
       setIsUploading(false);
+      // Ensure the UI leaves the generating state even on auto-generate path
+      setIsGeneratingMCQs(null);
     }
   };
 
@@ -2027,7 +2053,7 @@ export function Dashboard({}: DashboardProps) {
       // Use the new MCQ API endpoint
       const response = await apiService.generateMCQs(
         currentDocument.id,
-        undefined,
+        selectedCase, // Pass the selected case title
         5,
         true // Include hints
       );
@@ -2051,130 +2077,82 @@ export function Dashboard({}: DashboardProps) {
         error instanceof Error ? error.message : "Failed to generate MCQs";
       console.error("MCQ generation error:", error);
 
-      // Retry logic - retry up to 2 times
-      if (retryCount < 2) {
+      const isTimeout = errorMessage.toLowerCase().includes("timed out");
+      if (isTimeout) {
+        setUploadError("MCQ generation timed out. Please try again.");
+      } else if (retryCount < 1) {
         console.log(
-          `🔄 Retrying MCQ generation (attempt ${retryCount + 1}/2)...`
+          `🔄 Retrying MCQ generation (attempt ${retryCount + 1}/1)...`
         );
         setTimeout(() => {
           generateMCQsFromDocument(retryCount + 1);
-        }, 2000); // Wait 2 seconds before retry
+        }, 2000);
       } else {
-        setUploadError(`${errorMessage} (Failed after 3 attempts)`);
+        setUploadError(`${errorMessage} (Failed after 2 attempts)`);
       }
     } finally {
       setIsUploading(false);
+      setIsGeneratingMCQs(null);
     }
   };
 
   const retryMCQGeneration = async () => {
-    if (!selectedCase) return;
+    if (!selectedCase) {
+      console.log("❌ No case selected for MCQ retry");
+      return;
+    }
 
+    console.log("🔄 Starting MCQ retry for case:", selectedCase);
     setIsGeneratingMCQs(selectedCase);
     setUploadError("");
 
     try {
       const currentDocument = getCurrentChatDocument();
       if (!currentDocument) {
+        console.log("❌ No document available for MCQ generation");
         setUploadError("No document available for MCQ generation");
         setIsGeneratingMCQs(null);
         return;
       }
 
+      console.log("📤 Calling API to generate MCQs for case:", selectedCase);
       const mcqResponse = await apiService.generateMCQs(
         currentDocument.id,
-        selectedCase,
+        selectedCase, // This is the case title, not ID
         5 // Generate 5 MCQs per case
       );
 
+      console.log("📥 Received MCQ response:", mcqResponse);
+
       if (mcqResponse.questions && mcqResponse.questions.length > 0) {
+        console.log(
+          "✅ Successfully generated",
+          mcqResponse.questions.length,
+          "MCQs"
+        );
+        // Persist directly in state; separate effect will sync to localStorage
         setMCQQuestions((prev) => ({
           ...prev,
           [selectedCase]: mcqResponse.questions,
         }));
 
-        // Add a small delay to ensure state updates before clearing generating state
-        setTimeout(() => {
-          setIsGeneratingMCQs(null);
-
-          // Double-check that MCQs are still there after a short delay
-          setTimeout(() => {
-            const currentMCQs = mcqQuestions[selectedCase];
-            if (!currentMCQs || currentMCQs.length === 0) {
-              console.log(
-                `🔄 MCQs missing for ${selectedCase}, attempting recovery...`
-              );
-              try {
-                // Try multiple recovery strategies
-                const cachedMCQs = localStorage.getItem("mcq_questions");
-                if (cachedMCQs) {
-                  const parsedMCQs = JSON.parse(cachedMCQs);
-                  if (
-                    parsedMCQs[selectedCase] &&
-                    parsedMCQs[selectedCase].length > 0
-                  ) {
-                    console.log(
-                      `✅ Recovered MCQs from global storage for ${selectedCase}`
-                    );
-                    setMCQQuestions(parsedMCQs);
-                    return;
-                  }
-                }
-
-                // Try document-specific recovery
-                const currentDocument = getCurrentChatDocument();
-                if (currentDocument) {
-                  const docSpecificKey = `mcq_questions_${currentDocument.id}_${selectedCase}`;
-                  const docMCQs = localStorage.getItem(docSpecificKey);
-                  if (docMCQs) {
-                    const parsedDocMCQs = JSON.parse(docMCQs);
-                    if (parsedDocMCQs.length > 0) {
-                      console.log(
-                        `✅ Recovered MCQs from document-specific storage for ${selectedCase}`
-                      );
-                      setMCQQuestions((prev) => ({
-                        ...prev,
-                        [selectedCase]: parsedDocMCQs,
-                      }));
-                      return;
-                    }
-                  }
-                }
-
-                // Try backup recovery as last resort
-                const backupMCQs = localStorage.getItem("mcq_questions_backup");
-                if (backupMCQs) {
-                  const parsedBackupMCQs = JSON.parse(backupMCQs);
-                  if (
-                    parsedBackupMCQs[selectedCase] &&
-                    parsedBackupMCQs[selectedCase].length > 0
-                  ) {
-                    console.log(
-                      `✅ Recovered MCQs from backup storage for ${selectedCase}`
-                    );
-                    setMCQQuestions(parsedBackupMCQs);
-                    return;
-                  }
-                }
-
-                console.log(`❌ No MCQs found in storage for ${selectedCase}`);
-              } catch (e) {
-                console.error(
-                  `❌ Failed to restore MCQs for ${selectedCase}:`,
-                  e
-                );
-              }
-            }
-          }, 200);
-        }, 100);
+        // Clear generating state once updated
+        setIsGeneratingMCQs(null);
+        console.log("🎯 MCQ generation completed successfully");
       } else {
+        console.log("❌ No MCQs in response");
         setUploadError("No MCQs were generated. Please try again.");
         setIsGeneratingMCQs(null);
       }
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : "Failed to generate MCQs";
-      console.error("MCQ generation error:", error);
+      console.error("❌ MCQ generation error:", error);
+      console.error("❌ Error details:", {
+        message: errorMessage,
+        case: selectedCase,
+        document: getCurrentChatDocument()?.id,
+      });
       setUploadError(`Failed to generate MCQs: ${errorMessage}`);
       setIsGeneratingMCQs(null);
     }
