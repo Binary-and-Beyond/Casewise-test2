@@ -26,6 +26,7 @@ interface AIChatProps {
   caseTitle?: string;
   messages?: ChatMessage[];
   onMessageSent?: (message: ChatMessage) => void;
+  activeChat?: string;
 }
 
 export function AIChat({
@@ -34,6 +35,7 @@ export function AIChat({
   caseTitle,
   messages: propMessages,
   onMessageSent,
+  activeChat,
 }: AIChatProps) {
   const { user } = useAuth();
   const [localMessages, setLocalMessages] = useState<LocalChatMessage[]>([]);
@@ -48,6 +50,15 @@ export function AIChat({
   // Extract the main chat ID from context-specific chat ID
   const getMainChatId = (contextChatId?: string): string => {
     if (!contextChatId) return "";
+
+    // If it's a generated concept/case ID (starts with concept- or case-), use activeChat
+    if (
+      contextChatId.startsWith("concept-") ||
+      contextChatId.startsWith("case-")
+    ) {
+      // For generated concept/case chats, use the active chat as the main chat
+      return activeChat || "";
+    }
 
     // If it's a context-specific ID (contains -case- or -concept-), extract the main ID
     if (

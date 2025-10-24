@@ -2,7 +2,9 @@ import { config } from "./config";
 import { handleRateLimit } from "./rate-limiter";
 
 const API_BASE_URL = config.API_BASE_URL;
-console.log(API_BASE_URL);
+const FALLBACK_API_BASE_URL = config.FALLBACK_API_BASE_URL;
+console.log("🌐 Primary API URL:", API_BASE_URL);
+console.log("🌐 Fallback API URL:", FALLBACK_API_BASE_URL);
 
 export interface User {
   id: string;
@@ -230,6 +232,54 @@ class ApiService {
       clearTimeout(timeoutId);
     }
   }
+
+  private async fetchWithFallback(
+    endpoint: string,
+    init: RequestInit,
+    timeoutMs: number = 10000
+  ): Promise<Response> {
+    // Try primary API first
+    try {
+      console.log("🌐 Trying primary API:", `${API_BASE_URL}${endpoint}`);
+      const response = await this.fetchWithTimeout(
+        `${API_BASE_URL}${endpoint}`,
+        init,
+        timeoutMs
+      );
+
+      // If response is ok, return it
+      if (response.ok) {
+        console.log("✅ Primary API successful");
+        return response;
+      }
+
+      // If response is not ok but not a network error, still return it
+      // (let the caller handle HTTP errors)
+      console.log("⚠️ Primary API returned error status:", response.status);
+      return response;
+    } catch (error: any) {
+      console.log("❌ Primary API failed:", error.message);
+
+      // Try fallback API
+      try {
+        console.log(
+          "🌐 Trying fallback API:",
+          `${FALLBACK_API_BASE_URL}${endpoint}`
+        );
+        const fallbackResponse = await this.fetchWithTimeout(
+          `${FALLBACK_API_BASE_URL}${endpoint}`,
+          init,
+          timeoutMs
+        );
+        console.log("✅ Fallback API successful");
+        return fallbackResponse;
+      } catch (fallbackError: any) {
+        console.log("❌ Fallback API also failed:", fallbackError.message);
+        // Return the original error (from primary API)
+        throw error;
+      }
+    }
+  }
   private getAuthToken(): string | null {
     if (typeof window !== "undefined") {
       return localStorage.getItem("auth_token");
@@ -249,7 +299,7 @@ class ApiService {
   // Test backend connection
   async testConnection(): Promise<{ success: boolean; message: string }> {
     try {
-      const response = await fetch(`${API_BASE_URL}/`, {
+      const response = await this.fetchWithFallback("/", {
         method: "GET",
         headers: {
           "Content-Type": "application/json",
@@ -261,7 +311,13 @@ class ApiService {
 
       if (response.ok) {
         const data = await response.json();
-        return { success: true, message: "Backend connection successful" };
+        const apiUrl = response.url.includes(FALLBACK_API_BASE_URL)
+          ? "fallback"
+          : "primary";
+        return {
+          success: true,
+          message: `Backend connection successful (using ${apiUrl} API)`,
+        };
       } else {
         return {
           success: false,
@@ -273,7 +329,7 @@ class ApiService {
         return {
           success: false,
           message:
-            "CORS Error: Cannot connect to backend. Check if backend is running and CORS is configured.",
+            "CORS Error: Cannot connect to either backend. Check if backend is running and CORS is configured.",
         };
       }
       return {
@@ -356,7 +412,7 @@ class ApiService {
 
   // Authentication endpoints
   async signup(userData: SignupRequest): Promise<User> {
-    const response = await fetch(`${API_BASE_URL}/signup`, {
+    const response = await this.fetchWithFallback("/signup", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -371,10 +427,9 @@ class ApiService {
 
   async login(credentials: LoginRequest): Promise<AuthResponse> {
     console.log("🔥 FRONTEND: About to call login");
-    console.log("URL:", `${API_BASE_URL}/login`);
     console.log("Credentials:", credentials);
 
-    const response = await fetch(`${API_BASE_URL}/login`, {
+    const response = await this.fetchWithFallback("/login", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -411,11 +466,10 @@ class ApiService {
 
   async googleAuth(idToken: string): Promise<AuthResponse> {
     console.log("🔥 FRONTEND: About to call Google auth");
-    console.log("URL:", `${API_BASE_URL}/auth/google`);
     console.log("Token length:", idToken.length);
     console.log("Token preview:", idToken.substring(0, 50) + "...");
 
-    const response = await fetch(`${API_BASE_URL}/auth/google`, {
+    const response = await this.fetchWithFallback("/auth/google", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -768,9 +822,8 @@ class ApiService {
     console.log("🌐 API: Creating chat...");
     console.log("🌐 API: Request data:", request);
     console.log("🌐 API: Headers:", this.getHeaders());
-    console.log("🌐 API: URL:", `${API_BASE_URL}/chats`);
 
-    const response = await fetch(`${API_BASE_URL}/chats`, {
+    const response = await this.fetchWithFallback("/chats", {
       method: "POST",
       headers: this.getHeaders(),
       mode: "cors",
@@ -961,13 +1014,16 @@ class ApiService {
     documentId?: string
   ): Promise<ChatMessage> {
     return handleRateLimit(async () => {
-      const response = await fetch(`${API_BASE_URL}/chats/${chatId}/messages`, {
-        method: "POST",
-        headers: this.getHeaders(),
-        mode: "cors",
-        credentials: "include",
-        body: JSON.stringify({ message, document_id: documentId }),
-      });
+      const response = await this.fetchWithFallback(
+        `/chats/${chatId}/messages`,
+        {
+          method: "POST",
+          headers: this.getHeaders(),
+          mode: "cors",
+          credentials: "include",
+          body: JSON.stringify({ message, document_id: documentId }),
+        }
+      );
       return this.handleResponse<ChatMessage>(response);
     });
   }
@@ -976,9 +1032,8 @@ class ApiService {
     console.log("🌐 API: Getting chat messages for chat:", chatId);
     console.log("🌐 API: Chat ID type:", typeof chatId);
     console.log("🌐 API: Chat ID length:", chatId?.length);
-    console.log("🌐 API: URL:", `${API_BASE_URL}/chats/${chatId}/messages`);
 
-    const response = await fetch(`${API_BASE_URL}/chats/${chatId}/messages`, {
+    const response = await this.fetchWithFallback(`/chats/${chatId}/messages`, {
       method: "GET",
       headers: this.getHeaders(),
       mode: "cors",

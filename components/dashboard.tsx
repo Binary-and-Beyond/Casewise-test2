@@ -1038,7 +1038,7 @@ export function Dashboard({}: DashboardProps) {
           setContextChatId(activeChat);
           setContextMessages(messages);
           setIsLoadingContext(false);
-        }, 10000); // 10 second timeout
+        }, 60000); // 1 minute timeout
 
         try {
           const chatId = await getOrCreateContextChat(caseTitle, conceptTitle);
@@ -1097,6 +1097,7 @@ export function Dashboard({}: DashboardProps) {
         documentId={documentId}
         caseTitle={conceptTitle || caseTitle}
         messages={contextMessages}
+        activeChat={activeChat}
         onMessageSent={handleMessageSent}
       />
     );
@@ -3314,6 +3315,7 @@ export function Dashboard({}: DashboardProps) {
                 documentId={currentDocument?.id}
                 caseTitle={actualCaseTitle}
                 messages={[]}
+                activeChat={activeChat}
                 onMessageSent={(message) => {
                   // Don't update the shared chatMessages state
                   // The AIChat component handles its own context-specific messages
@@ -3528,6 +3530,7 @@ export function Dashboard({}: DashboardProps) {
                     chats.find((chat) => chat.id === conceptChatId)?.document_id
                   }
                   caseTitle={selectedCase}
+                  activeChat={activeChat}
                 />
               )}
             </div>
