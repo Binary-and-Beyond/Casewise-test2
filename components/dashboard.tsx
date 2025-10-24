@@ -169,7 +169,32 @@ export function Dashboard({}: DashboardProps) {
   });
 
   // State for context-specific chats
-  const [contextChats, setContextChats] = useState<Record<string, string>>({});
+  const [contextChats, setContextChats] = useState<Record<string, string>>(
+    () => {
+      // Load context chats from localStorage on initialization
+      if (typeof window !== "undefined") {
+        try {
+          const savedContextChats = localStorage.getItem("context_chats");
+          if (savedContextChats) {
+            const parsed = JSON.parse(savedContextChats);
+            console.log("🚀 Loaded context chats from localStorage:", parsed);
+            return parsed;
+          }
+        } catch (e) {
+          console.log("❌ Failed to parse context chats from localStorage:", e);
+        }
+      }
+      return {};
+    }
+  );
+
+  // Persist context chats to localStorage whenever they change
+  useEffect(() => {
+    if (typeof window !== "undefined" && Object.keys(contextChats).length > 0) {
+      localStorage.setItem("context_chats", JSON.stringify(contextChats));
+      console.log("💾 Saved context chats to localStorage:", contextChats);
+    }
+  }, [contextChats]);
 
   // Test API connection for debugging (only on first mount)
   useEffect(() => {
@@ -2639,17 +2664,6 @@ export function Dashboard({}: DashboardProps) {
       setSelectedConcept(concept);
       localStorage.setItem("selected_concept", concept);
 
-      // Create or get unique context chat for this concept
-      const conceptChatId = await getOrCreateContextChat(undefined, concept);
-      if (conceptChatId) {
-        console.log("🔄 Created/retrieved concept chat:", conceptChatId);
-        // Store the concept chat ID for this concept
-        setContextChats((prev) => ({
-          ...prev,
-          [`concept:${concept}`]: conceptChatId,
-        }));
-      }
-
       // Navigate to the specific concept route
       const conceptId = concept
         .toLowerCase()
@@ -3283,30 +3297,11 @@ export function Dashboard({}: DashboardProps) {
               selectedCase ||
               (generatedCases.length > 0 ? generatedCases[0].title : "default");
 
-            // Get or create case-specific context chat
-            const caseChatId = contextChats[`case:${actualCaseTitle}`];
-
-            if (!caseChatId) {
-              // Create case-specific context chat
-              getOrCreateContextChat(actualCaseTitle, undefined).then(
-                (chatId) => {
-                  if (chatId) {
-                    setContextChats((prev) => ({
-                      ...prev,
-                      [`case:${actualCaseTitle}`]: chatId,
-                    }));
-                  }
-                }
-              );
-              return (
-                <div className="flex items-center justify-center h-full min-h-[400px]">
-                  <div className="text-center">
-                    <div className="animate-spin rounded-full h-8 w-8 border-4 border-blue-500 border-t-transparent mx-auto mb-4"></div>
-                    <p className="text-gray-600">Creating case chat...</p>
-                  </div>
-                </div>
-              );
-            }
+            // Generate a case-specific chat ID for this case
+            // This ensures each case has its own unique chat without creating backend chats
+            const caseChatId = `case-${actualCaseTitle
+              .toLowerCase()
+              .replace(/\s+/g, "-")}`;
 
             console.log(`🎯 Explore Cases - Using case chat: ${caseChatId}`);
             console.log(`🎯 Active chat: ${activeChat}`);
@@ -3437,33 +3432,11 @@ export function Dashboard({}: DashboardProps) {
       return null;
     }
 
-    // Get the concept-specific chat ID
-    const conceptChatId = contextChats[`concept:${selectedConcept}`];
-
-    // If no concept chat exists, try to create one
-    if (!conceptChatId) {
-      console.log(
-        "🎯 No concept chat found, creating one for:",
-        selectedConcept
-      );
-      // Trigger concept chat creation
-      getOrCreateContextChat(undefined, selectedConcept).then((chatId) => {
-        if (chatId) {
-          setContextChats((prev) => ({
-            ...prev,
-            [`concept:${selectedConcept}`]: chatId,
-          }));
-        }
-      });
-      return (
-        <div className="flex items-center justify-center h-full min-h-screen">
-          <div className="text-center">
-            <div className="animate-spin rounded-full h-8 w-8 border-4 border-blue-500 border-t-transparent mx-auto mb-4"></div>
-            <p className="text-gray-600">Creating concept chat...</p>
-          </div>
-        </div>
-      );
-    }
+    // Generate a concept-specific chat ID for this concept
+    // This ensures each concept has its own unique chat without creating backend chats
+    const conceptChatId = `concept-${selectedConcept
+      .toLowerCase()
+      .replace(/\s+/g, "-")}`;
 
     return (
       <div className="flex-1 p-8 flex flex-col h-full">

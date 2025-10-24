@@ -641,7 +641,7 @@ def send_reset_password_email(email: str, reset_token: str, user_name: str = Non
         msg['Subject'] = "Password Reset Request - CaseWise"
         
         # Create reset link
-        frontend_url = os.getenv("FRONTEND_URL", "http://localhost:3000")
+        frontend_url = os.getenv("FRONTEND_URL", "https://casewise-beta.vercel.app")
         reset_link = f"{frontend_url}/reset-password?token={reset_token}"
         
         # Email body
@@ -857,32 +857,44 @@ app = FastAPI(
 
 @app.middleware("http")
 async def cors_handler(request: Request, call_next):
+    # Define allowed origins for production and development
+    allowed_origins = [
+        "https://casewise-beta.vercel.app",  # Production frontend
+        "http://localhost:3000",              # Local development
+        "http://localhost:3001",              # Alternative local port
+        "http://127.0.0.1:3000",             # Local development
+        "http://127.0.0.1:3001",             # Alternative local port
+    ]
+    
     # Get the origin from the request
     origin = request.headers.get("origin", "http://localhost:3000")
-    # Removed debug prints for performance
+    
+    # Check if origin is allowed
+    if origin in allowed_origins:
+        allowed_origin = origin
+    else:
+        # Default to production frontend for unknown origins
+        allowed_origin = "https://casewise-beta.vercel.app"
+        print(f"⚠️ Unknown origin: {origin}, defaulting to production frontend")
     
     # Handle preflight OPTIONS requests
     if request.method == "OPTIONS":
-        # Removed debug print for performance
         response = Response()
-        response.headers["Access-Control-Allow-Origin"] = origin
+        response.headers["Access-Control-Allow-Origin"] = allowed_origin
         response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS, PATCH, HEAD"
-        response.headers["Access-Control-Allow-Headers"] = "Accept, Accept-Language, Content-Language, Content-Type, Authorization, X-Requested-With, Origin, Access-Control-Request-Method, Access-Control-Request-Headers, Cache-Control, Pragma, Expires"
+        response.headers["Access-Control-Allow-Headers"] = "Accept, Accept-Language, Content-Language, Content-Type, Authorization, X-Requested-With, Origin, Access-Control-Request-Method, Access-Control-Request-Headers, Cache-Control, Pragma, Expires, X-Google-Auth-User"
         response.headers["Access-Control-Allow-Credentials"] = "true"
         response.headers["Access-Control-Max-Age"] = "3600"
-        # Removed debug print for performance
         return response
     
     # Process the request
     response = await call_next(request)
     
-    # Add CORS headers to all responses with specific origin
-    response.headers["Access-Control-Allow-Origin"] = origin
+    # Add CORS headers to all responses
+    response.headers["Access-Control-Allow-Origin"] = allowed_origin
     response.headers["Access-Control-Allow-Credentials"] = "true"
     response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS, PATCH, HEAD"
     response.headers["Access-Control-Allow-Headers"] = "Accept, Accept-Language, Content-Language, Content-Type, Authorization, X-Requested-With, Origin, Access-Control-Request-Method, Access-Control-Request-Headers, Cache-Control, Pragma, Expires, X-Google-Auth-User"
-    
-    # Removed debug prints for performance
     
     return response
 
@@ -897,7 +909,7 @@ async def catch_exceptions_middleware(request: Request, call_next):
         traceback.print_exc()
         
         # Return error response with CORS headers
-        origin = request.headers.get("origin", "http://localhost:3000")
+        origin = request.headers.get("origin", "https://casewise-beta.vercel.app")
         response = Response(
             content=f'{{"detail": "Internal server error: {str(e)}"}}',
             status_code=500,
@@ -913,7 +925,7 @@ async def catch_exceptions_middleware(request: Request, call_next):
 @app.options("/{path:path}")
 async def options_handler(path: str, request: Request):
     """Handle all OPTIONS requests for CORS preflight"""
-    origin = request.headers.get("origin", "http://localhost:3000")
+    origin = request.headers.get("origin", "https://casewise-beta.vercel.app")
     return Response(
         status_code=200,
         headers={
