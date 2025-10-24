@@ -1,0 +1,16 @@
+# Ignore backend files
+Casewise-backend/
+*.py
+requirements.txt
+venv/
+__pycache__/
+
+# Ignore development files
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Ignore lockfiles that might conflict
+pnpm-lock.yaml
+yarn.lock
