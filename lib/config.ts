@@ -5,15 +5,11 @@ const getGoogleClientId = () => {
     // Client-side: try to get from window object or process.env
     return (
       (window as any).NEXT_PUBLIC_GOOGLE_CLIENT_ID ||
-      process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID ||
-      "667668054845-4e63o2dlu50jlttnetusiukphseo33ck.apps.googleusercontent.com"
+      process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID
     );
   } else {
     // Server-side: use process.env
-    return (
-      process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID ||
-      "667668054845-4e63o2dlu50jlttnetusiukphseo33ck.apps.googleusercontent.com"
-    );
+    return process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
   }
 };
 

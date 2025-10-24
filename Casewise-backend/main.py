@@ -12,7 +12,7 @@ from dotenv import load_dotenv
 import pymongo      
 from bson import ObjectId
 from pydantic import BaseModel, Field, EmailStr, field_validator
-import google.generativeai as genai
+from openai import OpenAI
 import io
 import mimetypes
 # import jwt  # Temporarily disabled due to library conflicts
@@ -228,13 +228,14 @@ class PDFContentExtractor:
 MONGODB_URL = os.getenv("MONGODB_URL")
 DATABASE_NAME = os.getenv("DATABASE_NAME")
 SECRET_KEY = os.getenv("SECRET_KEY")
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
 ALGORITHM = "HS256"
 
-# Configure Gemini AI
-if GEMINI_API_KEY:
-    genai.configure(api_key=GEMINI_API_KEY)
+# Configure OpenAI AI
+openai_client = None
+if OPENAI_API_KEY:
+    openai_client = OpenAI(api_key=OPENAI_API_KEY)
 
 # Simple password hashing with SHA-256
 security = HTTPBearer()
@@ -553,13 +554,11 @@ def hash_password(password: str) -> str:
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     """Verify a password"""
-    print(f"VERIFY_PASSWORD: Verifying password")
     # Hash the plain password and compare
     salt = "casewise_salt_2024"
     salted_password = plain_password + salt
     computed_hash = hashlib.sha256(salted_password.encode('utf-8')).hexdigest()
     is_valid = computed_hash == hashed_password
-    print(f"VERIFY_PASSWORD: Password valid: {is_valid}")
     return is_valid
 
 def verify_google_token(id_token_str: str) -> dict:
@@ -568,17 +567,27 @@ def verify_google_token(id_token_str: str) -> dict:
         print(f"GOOGLE_AUTH: Verifying Google ID token")
         
         if not GOOGLE_CLIENT_ID:
+            print("GOOGLE_AUTH: ERROR - GOOGLE_CLIENT_ID not configured")
             raise HTTPException(status_code=500, detail="Google OAuth not configured")
         
-        # Verify the token
+        print(f"GOOGLE_AUTH: Using client ID: {GOOGLE_CLIENT_ID[:20]}...")
+        
+        # Check system clock
+        import time
+        current_time = int(time.time())
+        print(f"GOOGLE_AUTH: Current system time: {current_time}")
+        
+        # Verify the token with clock tolerance
         idinfo = id_token.verify_oauth2_token(
             id_token_str, 
             requests.Request(), 
-            GOOGLE_CLIENT_ID
+            GOOGLE_CLIENT_ID,
+            clock_skew_in_seconds=120  # Allow 2 minutes of clock difference
         )
         
         # Verify the issuer
         if idinfo['iss'] not in ['accounts.google.com', 'https://accounts.google.com']:
+            print(f"GOOGLE_AUTH: Wrong issuer: {idinfo['iss']}")
             raise ValueError('Wrong issuer.')
         
         print(f"GOOGLE_AUTH: Token verified for user: {idinfo.get('email')}")
@@ -586,10 +595,11 @@ def verify_google_token(id_token_str: str) -> dict:
         
     except ValueError as e:
         print(f"GOOGLE_AUTH: Invalid token: {e}")
-        raise HTTPException(status_code=401, detail="Invalid Google token")
+        raise HTTPException(status_code=401, detail=f"Invalid Google token: {str(e)}")
     except Exception as e:
         print(f"GOOGLE_AUTH: Error verifying token: {e}")
-        raise HTTPException(status_code=401, detail="Failed to verify Google token")
+        print(f"GOOGLE_AUTH: Error type: {type(e).__name__}")
+        raise HTTPException(status_code=401, detail=f"Failed to verify Google token: {str(e)}")
 
 def create_notification(user_id: str, notification_type: str, title: str, message: str, metadata: dict = None):
     """Create a notification for a user"""
@@ -756,24 +766,18 @@ def decode_jwt_token(token: str) -> dict:
 def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
     """Get current user from JWT token"""
     try:
-        print(f"AUTH: Validating token: {credentials.credentials[:20]}...")
         payload = decode_jwt_token(credentials.credentials)
         user_id: str = payload.get("sub")
-        print(f"AUTH: Token payload user_id: {user_id}")
         if user_id is None:
-            print("ERROR AUTH: No user_id in token payload")
             raise HTTPException(status_code=401, detail="Invalid token")
     except ValueError as e:
-        print(f"ERROR AUTH: JWT decode error: {e}")
         raise HTTPException(status_code=401, detail="Invalid token")
     
     user = db.users.find_one({"_id": ObjectId(user_id)})
     if user is None:
-        print(f"ERROR AUTH: User not found in database: {user_id}")
         raise HTTPException(status_code=401, detail="User not found")
     
     user["id"] = str(user["_id"])
-    print(f"SUCCESS AUTH: User authenticated: {user.get('email', 'No email')}")
     return user
 
 # Rate Limiter Class
@@ -855,20 +859,18 @@ app = FastAPI(
 async def cors_handler(request: Request, call_next):
     # Get the origin from the request
     origin = request.headers.get("origin", "http://localhost:3000")
-    print(f"CORS: Request from origin: {origin}")
-    print(f"CORS: Request method: {request.method}")
-    print(f"CORS: Request URL: {request.url}")
+    # Removed debug prints for performance
     
     # Handle preflight OPTIONS requests
     if request.method == "OPTIONS":
-        print(f"CORS: Handling OPTIONS preflight for origin: {origin}")
+        # Removed debug print for performance
         response = Response()
         response.headers["Access-Control-Allow-Origin"] = origin
         response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS, PATCH, HEAD"
         response.headers["Access-Control-Allow-Headers"] = "Accept, Accept-Language, Content-Language, Content-Type, Authorization, X-Requested-With, Origin, Access-Control-Request-Method, Access-Control-Request-Headers, Cache-Control, Pragma, Expires"
         response.headers["Access-Control-Allow-Credentials"] = "true"
         response.headers["Access-Control-Max-Age"] = "3600"
-        print(f"CORS: OPTIONS response headers: {dict(response.headers)}")
+        # Removed debug print for performance
         return response
     
     # Process the request
@@ -878,10 +880,9 @@ async def cors_handler(request: Request, call_next):
     response.headers["Access-Control-Allow-Origin"] = origin
     response.headers["Access-Control-Allow-Credentials"] = "true"
     response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS, PATCH, HEAD"
-    response.headers["Access-Control-Allow-Headers"] = "Accept, Accept-Language, Content-Language, Content-Type, Authorization, X-Requested-With, Origin, Access-Control-Request-Method, Access-Control-Request-Headers, Cache-Control, Pragma, Expires"
+    response.headers["Access-Control-Allow-Headers"] = "Accept, Accept-Language, Content-Language, Content-Type, Authorization, X-Requested-With, Origin, Access-Control-Request-Method, Access-Control-Request-Headers, Cache-Control, Pragma, Expires, X-Google-Auth-User"
     
-    print(f"CORS: Response headers set for origin: {origin}")
-    print(f"CORS: Access-Control-Allow-Origin: {response.headers.get('Access-Control-Allow-Origin')}")
+    # Removed debug prints for performance
     
     return response
 
@@ -996,9 +997,7 @@ def signup(user_data: UserSignup):
 
 @app.post("/login", response_model=Token)
 def login(user_credentials: UserLogin):
-    print(" LOGIN ENDPOINT CALLED")
-    print(f" Email: {user_credentials.email}")
-    print(f" Password length: {len(user_credentials.password)}")
+    # Removed debug prints for performance
     
     try:
         # Check if database is connected
@@ -1008,32 +1007,24 @@ def login(user_credentials: UserLogin):
         
         # Find user by email
         user = db.users.find_one({"email": user_credentials.email})
-        print(f" User found: {user is not None}")
-        
         if not user:
-            print(" User not found")
             raise HTTPException(status_code=401, detail="Incorrect email or password")
-        
-        print(f" User details: {user.get('username')} - Active: {user.get('is_active', True)}")
         
         # Verify password
         password_valid = verify_password(user_credentials.password, user["hashed_password"])
-        print(f" Password verification result: {password_valid}")
         
         if not password_valid:
-            print(" Invalid password")
             raise HTTPException(status_code=401, detail="Incorrect email or password")
         
         # Check if user is active
         if not user.get("is_active", True):
-            print(" User inactive")
             raise HTTPException(status_code=400, detail="Inactive user")
         
         # Create access token with different expiration based on remember_me
         # If remember_me is True, token expires in 30 days, otherwise 24 hours
         expires_delta = timedelta(days=30) if user_credentials.remember_me else timedelta(hours=24)
         access_token = create_access_token(data={"sub": str(user["_id"])}, expires_delta=expires_delta)
-        print(f" Login successful - token created (remember_me: {user_credentials.remember_me}, expires: {expires_delta})")
+        # Removed debug print for performance
         
         return {
             "access_token": access_token,
@@ -1108,10 +1099,14 @@ def admin_login(user_credentials: UserLogin):
 def google_auth(request: GoogleAuthRequest):
     """Authenticate user with Google OAuth"""
     print("GOOGLE_AUTH ENDPOINT CALLED")
+    print(f"GOOGLE_AUTH: Token length: {len(request.id_token)}")
+    print(f"GOOGLE_AUTH: Token preview: {request.id_token[:50]}...")
     
     try:
         # Verify the Google ID token
+        print("GOOGLE_AUTH: Starting token verification...")
         idinfo = verify_google_token(request.id_token)
+        print("GOOGLE_AUTH: Token verification successful")
         
         email = idinfo.get('email')
         name = idinfo.get('name', '')
@@ -1169,9 +1164,11 @@ def google_auth(request: GoogleAuthRequest):
         
     except HTTPException as he:
         print(f"GOOGLE_AUTH: HTTP Exception: {he.detail}")
+        print(f"GOOGLE_AUTH: HTTP Exception status: {he.status_code}")
         raise
     except Exception as e:
         print(f"GOOGLE_AUTH: Unexpected error: {e}")
+        print(f"GOOGLE_AUTH: Error type: {type(e).__name__}")
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Google authentication error: {str(e)}")
@@ -2344,21 +2341,25 @@ async def get_extracted_content(
         "total_mcqs": extraction_metadata.get("detected_mcqs_count", 0)
     }
 
-@app.get("/test-gemini")
-async def test_gemini():
-    """Test Gemini API and list available models"""
+@app.get("/test-openai")
+async def test_openai():
+    """Test OpenAI API and list available models"""
     try:
-        import google.generativeai as genai
+        if not openai_client:
+            return {
+                "api_key_configured": False,
+                "api_key_prefix": None,
+                "available_models": [],
+                "error": "OpenAI API key not configured"
+            }
         
-        # List all available models
-        available_models = []
-        for m in genai.list_models():
-            if 'generateContent' in m.supported_generation_methods:
-                available_models.append(m.name)
+        # List available models
+        models = openai_client.models.list()
+        available_models = [model.id for model in models.data if 'gpt' in model.id.lower()]
         
         return {
-            "api_key_configured": bool(GEMINI_API_KEY),
-            "api_key_prefix": GEMINI_API_KEY[:10] if GEMINI_API_KEY else None,
+            "api_key_configured": bool(OPENAI_API_KEY),
+            "api_key_prefix": OPENAI_API_KEY[:10] if OPENAI_API_KEY else None,
             "available_models": available_models
         }
     except Exception as e:
@@ -2372,10 +2373,10 @@ async def generate_case_scenarios(
     request: CaseGenerationRequest,
     current_user: dict = Depends(get_current_user)
 ):
-    """Generate case scenarios from a document using Gemini AI"""
+    """Generate case scenarios from a document using OpenAI GPT-4 mini"""
     
-    if not GEMINI_API_KEY:
-        raise HTTPException(status_code=500, detail="Gemini AI API key not configured")
+    if not OPENAI_API_KEY:
+        raise HTTPException(status_code=500, detail="OpenAI API key not configured")
     
     # Find the document
     try:
@@ -2394,23 +2395,9 @@ async def generate_case_scenarios(
         raise HTTPException(status_code=400, detail="Document does not contain readable text content")
     
     try:
-        # Initialize Gemini model - try different model names
-        model = None
-        model_names = [
-            'models/gemini-2.5-flash'
-        ]
-        
-        for model_name in model_names:
-            try:
-                model = genai.GenerativeModel(model_name)
-                print(f"SUCCESS: Using {model_name} for case generation")
-                break
-            except Exception as e:
-                print(f"WARNING: {model_name} failed: {e}")
-                continue
-        
-        if not model:
-            raise Exception("No working Gemini model found")
+        # Use OpenAI GPT-4 mini
+        if not openai_client:
+            raise Exception("OpenAI client not initialized")
         
         # Create the prompt for case generation
         system_prompt = f"""
@@ -2456,13 +2443,21 @@ async def generate_case_scenarios(
         ]
         """
         
-        # Generate response from Gemini
-        response = model.generate_content(system_prompt)
+        # Generate response from OpenAI
+        response = openai_client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": "You are an expert medical case scenario generator. Always respond with valid JSON format."},
+                {"role": "user", "content": system_prompt}
+            ],
+            temperature=0.7,
+            max_tokens=4000
+        )
         
         # Parse the response (assuming it returns JSON)
         import json
         try:
-            scenarios_data = json.loads(response.text)
+            scenarios_data = json.loads(response.choices[0].message.content)
         except json.JSONDecodeError:
             # If JSON parsing fails, create a fallback response
             scenarios_data = [{
@@ -2490,10 +2485,10 @@ async def generate_case_titles(
     request: CaseTitleRequest,
     current_user: dict = Depends(get_current_user)
 ):
-    """Generate case titles from a document using Gemini AI"""
+    """Generate case titles from a document using OpenAI GPT-4 mini"""
     
-    if not GEMINI_API_KEY:
-        raise HTTPException(status_code=500, detail="Gemini AI API key not configured")
+    if not OPENAI_API_KEY:
+        raise HTTPException(status_code=500, detail="OpenAI API key not configured")
     
     # Find the document
     try:
@@ -2512,8 +2507,9 @@ async def generate_case_titles(
         raise HTTPException(status_code=400, detail="Document does not contain readable text content")
     
     try:
-        # Initialize Gemini model
-        model = genai.GenerativeModel('models/gemini-2.5-flash')
+        # Use OpenAI GPT-4 mini
+        if not openai_client:
+            raise Exception("OpenAI client not initialized")
         
         # Create the prompt for case title generation
         system_prompt = f"""
@@ -2543,16 +2539,24 @@ async def generate_case_titles(
         ]
         """
         
-        # Generate response from Gemini
-        response = model.generate_content(system_prompt)
+        # Generate response from OpenAI
+        response = openai_client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": "You are an expert medical case generator. Always respond with valid JSON format."},
+                {"role": "user", "content": system_prompt}
+            ],
+            temperature=0.7,
+            max_tokens=2000
+        )
         
         # Parse the response
         import json
-        print(f"AI Raw Gemini response: {response.text}")
+        print(f"AI Raw OpenAI response: {response.choices[0].message.content}")
         
         try:
             # Try to extract JSON from the response if it's wrapped in markdown
-            response_text = response.text.strip()
+            response_text = response.choices[0].message.content.strip()
             if response_text.startswith('```json'):
                 response_text = response_text.replace('```json', '').replace('```', '').strip()
             elif response_text.startswith('```'):
@@ -2562,7 +2566,7 @@ async def generate_case_titles(
             print(f"SUCCESS: Successfully parsed JSON: {len(cases_data)} cases")
         except json.JSONDecodeError as e:
             print(f"ERROR: JSON parsing failed: {e}")
-            print(f"Response text: {response.text[:500]}...")
+            print(f"Response text: {response.choices[0].message.content[:500]}...")
             # If JSON parsing fails, create a fallback response based on document content
             cases_data = [{
                 "id": f"case_{i+1}",
@@ -2588,10 +2592,10 @@ async def generate_mcqs(
     request: MCQRequest,
     current_user: dict = Depends(get_current_user)
 ):
-    """Generate MCQ questions from a document or case using Gemini AI"""
+    """Generate MCQ questions from a document or case using OpenAI GPT-4 mini"""
     
-    if not GEMINI_API_KEY:
-        raise HTTPException(status_code=500, detail="Gemini AI API key not configured")
+    if not OPENAI_API_KEY:
+        raise HTTPException(status_code=500, detail="OpenAI API key not configured")
     
     document_context = ""
     
@@ -2611,8 +2615,9 @@ async def generate_mcqs(
         raise HTTPException(status_code=400, detail="No document content available for MCQ generation")
     
     try:
-        # Initialize Gemini model
-        model = genai.GenerativeModel('models/gemini-2.5-flash')
+        # Use OpenAI GPT-4 mini
+        if not openai_client:
+            raise Exception("OpenAI client not initialized")
         
         # Create the prompt for MCQ generation
         case_context = ""
@@ -2626,51 +2631,53 @@ async def generate_mcqs(
             hint_instruction = "\n        - Include helpful hints that guide students toward the correct answer without giving it away"
             hint_field = ',\n                "hint": "Helpful hint that guides toward the correct answer without revealing it"'
         
-        system_prompt = f"""
-        You are an expert medical educator creating MCQ questions. Based on the following content, generate {request.num_questions} high-quality multiple-choice questions.{case_context}
+        system_prompt = f"""Generate {request.num_questions} medical MCQ questions from this content:{case_context}
 
-        Content:
-        {document_context}
+Content: {document_context[:500]}
 
-        IMPORTANT INSTRUCTIONS:
-        - Create clinically relevant, educational MCQ questions
-        - Each question should have exactly 5 answer options (A, B, C, D, E)
-        - Only ONE option should be correct
-        - Include detailed explanations for the correct answer
-        - Assign appropriate difficulty levels (Easy, Moderate, Hard)
-        - Focus on key medical concepts, diagnosis, treatment, and pathophysiology
-        - Make distractors plausible but clearly incorrect{hint_instruction}
+Requirements:
+- 4 options per question (A, B, C, D)
+- One correct answer
+- Include explanations
+- Assign difficulty (Easy/Moderate/Hard)
+- Focus on key medical concepts{hint_instruction}
 
-        CRITICAL: You must respond with ONLY a valid JSON array. Do not include any markdown formatting, explanations, or additional text. Start your response directly with [ and end with ].
-
-        Format your response as a JSON array with the following structure:
-        [
-            {{
-                "id": "mcq_1",
-                "question": "Clear, specific question text ending with a question mark?",
-                "options": [
-                    {{"id": "A", "text": "Option A text", "is_correct": false}},
-                    {{"id": "B", "text": "Option B text", "is_correct": true}},
-                    {{"id": "C", "text": "Option C text", "is_correct": false}},
-                    {{"id": "D", "text": "Option D text", "is_correct": false}},
-                    {{"id": "E", "text": "Option E text", "is_correct": false}}
-                ],
-                "explanation": "Detailed explanation of why the correct answer is correct and why others are wrong.",
-                "difficulty": "Easy/Moderate/Hard"{hint_field}
-            }}
-        ]
-        """
+Return JSON array only:
+[{{"id": "mcq_1", "question": "Question text?", "options": [{{"id": "A", "text": "Option A", "is_correct": false}}, {{"id": "B", "text": "Correct answer", "is_correct": true}}, {{"id": "C", "text": "Option C", "is_correct": false}}, {{"id": "D", "text": "Option D", "is_correct": false}}], "explanation": "Brief explanation", "difficulty": "Moderate"{hint_field}}}]"""
         
-        # Generate response from Gemini
-        response = model.generate_content(system_prompt)
+        # Generate response from OpenAI with optimized settings
+        try:
+            response = openai_client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": "You are a medical educator. Always respond with valid JSON format."},
+                    {"role": "user", "content": system_prompt}
+                ],
+                temperature=0.2,  # Even lower temperature for faster, more consistent responses
+                max_tokens=1200,  # Further reduced token limit for faster generation
+                timeout=25  # Reduced timeout to prevent hanging
+            )
+        except Exception as e:
+            print(f"OpenAI API error: {e}")
+            # Fallback: try with even more optimized settings
+            response = openai_client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": "Generate medical MCQs in JSON format."},
+                    {"role": "user", "content": f"Create {request.num_questions} medical MCQs from: {document_context[:800]}"}
+                ],
+                temperature=0.1,
+                max_tokens=800,
+                timeout=15
+            )
         
         # Parse the response
         import json
-        print(f"AI Raw MCQ Gemini response: {response.text}")
+        print(f"AI Raw MCQ OpenAI response: {response.choices[0].message.content}")
         
         try:
             # Try to extract JSON from the response if it's wrapped in markdown
-            response_text = response.text.strip()
+            response_text = response.choices[0].message.content.strip()
             if response_text.startswith('```json'):
                 response_text = response_text.replace('```json', '').replace('```', '').strip()
             elif response_text.startswith('```'):
@@ -2680,7 +2687,7 @@ async def generate_mcqs(
             print(f"SUCCESS: Successfully parsed MCQ JSON: {len(mcqs_data)} questions")
         except json.JSONDecodeError as e:
             print(f"ERROR: MCQ JSON parsing failed: {e}")
-            print(f"Response text: {response.text[:500]}...")
+            print(f"Response text: {response.choices[0].message.content[:500]}...")
             # If JSON parsing fails, create a fallback response
             mcqs_data = [{
                 "id": f"mcq_{i+1}",
@@ -2722,10 +2729,10 @@ async def identify_concepts(
     request: ConceptRequest,
     current_user: dict = Depends(get_current_user)
 ):
-    """Identify key medical concepts from a document using Gemini AI"""
+    """Identify key medical concepts from a document using OpenAI GPT-4 mini"""
     
-    if not GEMINI_API_KEY:
-        raise HTTPException(status_code=500, detail="Gemini AI API key not configured")
+    if not OPENAI_API_KEY:
+        raise HTTPException(status_code=500, detail="OpenAI API key not configured")
     
     # Find the document
     try:
@@ -2744,8 +2751,9 @@ async def identify_concepts(
         raise HTTPException(status_code=400, detail="Document does not contain readable text content")
     
     try:
-        # Initialize Gemini model
-        model = genai.GenerativeModel('models/gemini-2.5-flash')
+        # Use OpenAI GPT-4 mini
+        if not openai_client:
+            raise Exception("OpenAI client not initialized")
         
         # Create the prompt for concept identification
         system_prompt = f"""
@@ -2775,16 +2783,24 @@ async def identify_concepts(
         ]
         """
         
-        # Generate response from Gemini
-        response = model.generate_content(system_prompt)
+        # Generate response from OpenAI
+        response = openai_client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": "You are an expert medical educator specializing in concept identification. Always respond with valid JSON format."},
+                {"role": "user", "content": system_prompt}
+            ],
+            temperature=0.7,
+            max_tokens=2000
+        )
         
         # Parse the response
         import json
-        print(f"AI Raw Concepts Gemini response: {response.text}")
+        print(f"AI Raw Concepts OpenAI response: {response.choices[0].message.content}")
         
         try:
             # Try to extract JSON from the response if it's wrapped in markdown
-            response_text = response.text.strip()
+            response_text = response.choices[0].message.content.strip()
             if response_text.startswith('```json'):
                 response_text = response_text.replace('```json', '').replace('```', '').strip()
             elif response_text.startswith('```'):
@@ -2794,7 +2810,7 @@ async def identify_concepts(
             print(f"SUCCESS: Successfully parsed Concepts JSON: {len(concepts_data)} concepts")
         except json.JSONDecodeError as e:
             print(f"ERROR: Concepts JSON parsing failed: {e}")
-            print(f"Response text: {response.text[:500]}...")
+            print(f"Response text: {response.choices[0].message.content[:500]}...")
             # If JSON parsing fails, create a fallback response
             concepts_data = [{
                 "id": f"concept_{i+1}",
@@ -2832,8 +2848,8 @@ async def auto_generate_content(
                 detail="Rate limit exceeded. Please wait before making another request."
             )
     
-    if not GEMINI_API_KEY:
-        raise HTTPException(status_code=500, detail="Gemini AI API key not configured")
+    if not OPENAI_API_KEY:
+        raise HTTPException(status_code=500, detail="OpenAI API key not configured")
     
     print(f" Auto-generation started for document: {request.document_id}")
     
@@ -2861,8 +2877,9 @@ async def auto_generate_content(
     }
     
     try:
-        # Initialize Gemini model
-        model = genai.GenerativeModel('models/gemini-2.5-flash')
+        # Use OpenAI GPT-4 mini
+        if not openai_client:
+            raise Exception("OpenAI client not initialized")
         
         # Generate Cases
         if request.generate_cases:
@@ -2877,13 +2894,21 @@ Return JSON array:
 
 Generate exactly {request.num_cases} unique cases."""
                 
-                cases_response = model.generate_content(cases_prompt)
+                cases_response = openai_client.chat.completions.create(
+                    model="gpt-4o-mini",
+                    messages=[
+                        {"role": "system", "content": "You are an expert medical case generator. Always respond with valid JSON format."},
+                        {"role": "user", "content": cases_prompt}
+                    ],
+                    temperature=0.7,
+                    max_tokens=2000
+                )
                 import json
-                print(f"Raw cases response: {cases_response.text[:500]}...")
+                print(f"Raw cases response: {cases_response.choices[0].message.content[:500]}...")
                 
                 try:
                     # Clean the response text
-                    response_text = cases_response.text.strip()
+                    response_text = cases_response.choices[0].message.content.strip()
                     
                     # Remove markdown formatting if present
                     if response_text.startswith('```json'):
@@ -2915,7 +2940,7 @@ Generate exactly {request.num_cases} unique cases."""
                         
                 except json.JSONDecodeError as e:
                     print(f" Failed to parse cases JSON: {e}")
-                    print(f" Response text: {cases_response.text[:500]}...")
+                    print(f" Response text: {cases_response.choices[0].message.content[:500]}...")
                     # Create fallback cases based on document content
                     fallback_cases = []
                     for i in range(min(request.num_cases, 5)):  # Limit fallback to 5 cases
@@ -2957,12 +2982,20 @@ Return JSON array:
 
 Generate exactly {request.num_mcqs} questions."""
                 
-                mcq_response = model.generate_content(mcq_prompt)
-                print(f"Raw MCQ response: {mcq_response.text[:500]}...")
+                mcq_response = openai_client.chat.completions.create(
+                    model="gpt-4o-mini",
+                    messages=[
+                        {"role": "system", "content": "You are an expert medical educator creating MCQ questions. Always respond with valid JSON format."},
+                        {"role": "user", "content": mcq_prompt}
+                    ],
+                    temperature=0.7,
+                    max_tokens=3000
+                )
+                print(f"Raw MCQ response: {mcq_response.choices[0].message.content[:500]}...")
                 
                 try:
                     # Clean the response text
-                    response_text = mcq_response.text.strip()
+                    response_text = mcq_response.choices[0].message.content.strip()
                     
                     # Remove markdown formatting if present
                     if response_text.startswith('```json'):
@@ -3005,7 +3038,7 @@ Generate exactly {request.num_mcqs} questions."""
                         
                 except json.JSONDecodeError as e:
                     print(f" Failed to parse MCQs JSON: {e}")
-                    print(f" Response text: {mcq_response.text[:500]}...")
+                    print(f" Response text: {mcq_response.choices[0].message.content[:500]}...")
                     # Create fallback MCQs based on document content
                     fallback_mcqs = []
                     for i in range(min(request.num_mcqs, 5)):  # Limit fallback to 5 MCQs
@@ -3075,12 +3108,20 @@ Return JSON array:
 
 Identify exactly {request.num_concepts} concepts."""
                 
-                concepts_response = model.generate_content(concepts_prompt)
-                print(f"Raw concepts response: {concepts_response.text[:500]}...")
+                concepts_response = openai_client.chat.completions.create(
+                    model="gpt-4o-mini",
+                    messages=[
+                        {"role": "system", "content": "You are an expert medical educator identifying key concepts. Always respond with valid JSON format."},
+                        {"role": "user", "content": concepts_prompt}
+                    ],
+                    temperature=0.7,
+                    max_tokens=2000
+                )
+                print(f"Raw concepts response: {concepts_response.choices[0].message.content[:500]}...")
                 
                 try:
                     # Clean the response text
-                    response_text = concepts_response.text.strip()
+                    response_text = concepts_response.choices[0].message.content.strip()
                     
                     # Remove markdown formatting if present
                     if response_text.startswith('```json'):
@@ -3112,7 +3153,7 @@ Identify exactly {request.num_concepts} concepts."""
                         
                 except json.JSONDecodeError as e:
                     print(f" Failed to parse concepts JSON: {e}")
-                    print(f" Response text: {concepts_response.text[:500]}...")
+                    print(f" Response text: {concepts_response.choices[0].message.content[:500]}...")
                     # Create fallback concepts based on document content
                     fallback_concepts = []
                     for i in range(min(request.num_concepts, 5)):  # Limit fallback to 5 concepts
@@ -3153,12 +3194,20 @@ Return JSON array only:
     }}
 ]"""
                 
-                titles_response = model.generate_content(titles_prompt)
-                print(f"Raw titles response: {titles_response.text[:500]}...")
+                titles_response = openai_client.chat.completions.create(
+                    model="gpt-4o-mini",
+                    messages=[
+                        {"role": "system", "content": "You are an expert medical case generator. Always respond with valid JSON format."},
+                        {"role": "user", "content": titles_prompt}
+                    ],
+                    temperature=0.7,
+                    max_tokens=2000
+                )
+                print(f"Raw titles response: {titles_response.choices[0].message.content[:500]}...")
                 
                 try:
                     # Clean the response text
-                    response_text = titles_response.text.strip()
+                    response_text = titles_response.choices[0].message.content.strip()
                     
                     # Remove markdown formatting if present
                     if response_text.startswith('```json'):
@@ -3185,7 +3234,7 @@ Return JSON array only:
                         
                 except json.JSONDecodeError as e:
                     print(f" Failed to parse titles JSON: {e}")
-                    print(f" Response text: {titles_response.text[:500]}...")
+                    print(f" Response text: {titles_response.choices[0].message.content[:500]}...")
                     # Create fallback titles based on document content
                     fallback_titles = []
                     for i in range(min(request.num_titles, 5)):  # Limit fallback to 5 titles
@@ -3227,8 +3276,8 @@ async def quick_generate_content(
 ):
     """Quick generation endpoint that returns immediately with basic content"""
     
-    if not GEMINI_API_KEY:
-        raise HTTPException(status_code=500, detail="Gemini AI API key not configured")
+    if not OPENAI_API_KEY:
+        raise HTTPException(status_code=500, detail="OpenAI API key not configured")
     
     print(f" Quick generation started for document: {request.document_id}")
     
@@ -3249,8 +3298,9 @@ async def quick_generate_content(
         raise HTTPException(status_code=400, detail="Document does not contain readable text content")
     
     try:
-        # Initialize Gemini model
-        model = genai.GenerativeModel('models/gemini-2.5-flash')
+        # Use OpenAI GPT-4 mini
+        if not openai_client:
+            raise Exception("OpenAI client not initialized")
         
         # Generate only MCQs first (most important for user experience)
         mcqs = []
@@ -3278,12 +3328,20 @@ Return JSON array only:
     }}
 ]"""
                 
-                mcq_response = model.generate_content(mcq_prompt)
-                print(f"Quick MCQ response: {mcq_response.text[:200]}...")
+                mcq_response = openai_client.chat.completions.create(
+                    model="gpt-4o-mini",
+                    messages=[
+                        {"role": "system", "content": "You are an expert medical educator creating MCQ questions. Always respond with valid JSON format."},
+                        {"role": "user", "content": mcq_prompt}
+                    ],
+                    temperature=0.7,
+                    max_tokens=2000
+                )
+                print(f"Quick MCQ response: {mcq_response.choices[0].message.content[:200]}...")
                 
                 try:
                     # Clean the response text
-                    response_text = mcq_response.text.strip()
+                    response_text = mcq_response.choices[0].message.content.strip()
                     
                     # Remove markdown formatting if present
                     if response_text.startswith('```json'):
@@ -3454,9 +3512,9 @@ async def chat_with_ai(
     print(f"Message: {request.message}")
     print(f"Document ID: {request.document_id}")
     
-    if not GEMINI_API_KEY:
-        print("ERROR: GEMINI_API_KEY not configured")
-        raise HTTPException(status_code=500, detail="Gemini AI API key not configured")
+    if not OPENAI_API_KEY:
+        print("ERROR: OPENAI_API_KEY not configured")
+        raise HTTPException(status_code=500, detail="OpenAI API key not configured")
     
     # If document_id is provided, get the document context
     document_context = ""
@@ -3472,24 +3530,10 @@ async def chat_with_ai(
             pass  # Continue without document context if there's an error
     
     try:
-        print("AI: Initializing Gemini model...")
-        # Initialize Gemini model - try different model names
-        model = None
-        model_names = [
-            'models/gemini-2.5-flash'
-        ]
-        
-        for model_name in model_names:
-            try:
-                model = genai.GenerativeModel(model_name)
-                print(f"SUCCESS: Using {model_name}")
-                break
-            except Exception as e:
-                print(f"WARNING: {model_name} failed: {e}")
-                continue
-        
-        if not model:
-            raise Exception("No working Gemini model found")
+        print("AI: Initializing OpenAI client...")
+        # Use OpenAI GPT-4 mini
+        if not openai_client:
+            raise Exception("OpenAI client not initialized")
         
         print("AI: Creating prompt...")
         # Create the chat prompt
@@ -3509,7 +3553,7 @@ async def chat_with_ai(
         User Question: {request.message}
         {document_context}
         
-        Please provide a comprehensive, detailed response that thoroughly addresses the user's question. Structure your response as follows:
+        Please provide a comprehensive, detailed response that thoroughly addresses the users query. Structure your response as follows:
 
         ## Direct Answer
         Provide a clear, direct answer to the question with specific details and context.
@@ -3538,13 +3582,21 @@ async def chat_with_ai(
 
         Make your response educational, detailed, and valuable for medical learning."""
         
-        print("AI: Generating response from Gemini...")
-        # Generate response from Gemini
-        response = model.generate_content(system_prompt)
+        print("AI: Generating response from OpenAI...")
+        # Generate response from OpenAI
+        response = openai_client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": "You are an expert medical AI assistant specializing in medical education and case-based learning."},
+                {"role": "user", "content": system_prompt}
+            ],
+            temperature=0.7,
+            max_tokens=2000
+        )
         
         print("SUCCESS: Response generated successfully")
         return ChatResponse(
-            response=response.text,
+            response=response.choices[0].message.content,
             timestamp=datetime.now()
         )
         
@@ -3750,8 +3802,8 @@ async def send_chat_message(
         raise HTTPException(status_code=404, detail="Chat not found")
     
     # Get AI response using existing chat endpoint logic
-    if not GEMINI_API_KEY:
-        raise HTTPException(status_code=500, detail="Gemini AI API key not configured")
+    if not OPENAI_API_KEY:
+        raise HTTPException(status_code=500, detail="OpenAI API key not configured")
     
     # If document_id is provided, get the document context
     document_context = ""
@@ -3768,23 +3820,9 @@ async def send_chat_message(
             pass
     
     try:
-        # Initialize Gemini model - try different model names
-        model = None
-        model_names = [
-            'models/gemini-2.5-flash',
-        ]
-        
-        for model_name in model_names:
-            try:
-                model = genai.GenerativeModel(model_name)
-                print(f"SUCCESS: Using {model_name} for chat")
-                break
-            except Exception as e:
-                print(f"WARNING: {model_name} failed: {e}")
-                continue
-        
-        if not model:
-            raise Exception("No working Gemini model found")
+        # Use OpenAI GPT-4 mini
+        if not openai_client:
+            raise Exception("OpenAI client not initialized")
         
         # Create the chat prompt
         system_prompt = f"""You are an expert medical AI assistant specializing in medical education and case-based learning. Your role is to provide comprehensive, detailed, and educational responses to help medical students understand complex medical concepts.
@@ -3803,7 +3841,7 @@ async def send_chat_message(
         User Question: {request.message}
         {document_context}
         
-        Please provide a comprehensive, detailed response that thoroughly addresses the user's question. Structure your response as follows:
+        Please provide a comprehensive, detailed response that thoroughly addresses the users query. Structure your response as follows:
 
         ## Direct Answer
         Provide a clear, direct answer to the question with specific details and context.
@@ -3832,9 +3870,17 @@ async def send_chat_message(
 
         Make your response educational, detailed, and valuable for medical learning."""
         
-        # Generate response from Gemini
-        response = model.generate_content(system_prompt)
-        ai_response = response.text
+        # Generate response from OpenAI
+        response = openai_client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": "You are an expert medical AI assistant specializing in medical education and case-based learning."},
+                {"role": "user", "content": system_prompt}
+            ],
+            temperature=0.7,
+            max_tokens=4000
+        )
+        ai_response = response.choices[0].message.content
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error generating AI response: {str(e)}")
@@ -4076,7 +4122,7 @@ async def get_or_create_context_chat(
     request: CreateChatRequest,
     current_user: dict = Depends(get_current_user)
 ):
-    """Get or create a context-specific chat (case/concept)"""
+    """Get or create a context-specific chat (case/concept) - Medical AI Casewise"""
     
     try:
         print(f"CONTEXT CHAT: Request: {request}")

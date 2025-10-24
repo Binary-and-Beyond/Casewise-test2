@@ -240,66 +240,22 @@ export function Dashboard({}: DashboardProps) {
   >(() => {
     if (typeof window !== "undefined") {
       try {
-        // Try to load from global storage first
         const cachedMCQs = localStorage.getItem("mcq_questions");
         if (cachedMCQs) {
           const parsedMCQs = JSON.parse(cachedMCQs);
           console.log(
             "🚀 Initializing MCQ questions from localStorage:",
             Object.keys(parsedMCQs).length,
-            "cases"
+            "cases",
+            "Details:",
+            Object.keys(parsedMCQs).map((caseTitle) => ({
+              case: caseTitle,
+              questions: parsedMCQs[caseTitle].length,
+              firstQuestion:
+                parsedMCQs[caseTitle][0]?.question?.substring(0, 50) + "...",
+            }))
           );
           return parsedMCQs;
-        }
-
-        // If no global storage, try to reconstruct from document-specific keys
-        const allKeys = Object.keys(localStorage);
-        const mcqKeys = allKeys.filter(
-          (key) => key.startsWith("mcq_questions_") && key.includes("_")
-        );
-        if (mcqKeys.length > 0) {
-          const reconstructedMCQs: Record<string, MCQQuestion[]> = {};
-          mcqKeys.forEach((key) => {
-            try {
-              const parts = key.split("_");
-              if (parts.length >= 4) {
-                const caseTitle = parts.slice(3).join("_"); // Handle case titles with underscores
-                const questions = JSON.parse(localStorage.getItem(key) || "[]");
-                if (questions.length > 0) {
-                  reconstructedMCQs[caseTitle] = questions;
-                }
-              }
-            } catch (e) {
-              console.log(`❌ Failed to parse MCQ key ${key}:`, e);
-            }
-          });
-
-          if (Object.keys(reconstructedMCQs).length > 0) {
-            console.log(
-              "🚀 Reconstructed MCQ questions from document-specific keys:",
-              Object.keys(reconstructedMCQs).length,
-              "cases"
-            );
-            return reconstructedMCQs;
-          }
-        }
-
-        // Try backup recovery as last resort
-        const backupMCQs = localStorage.getItem("mcq_questions_backup");
-        if (backupMCQs) {
-          try {
-            const parsedBackupMCQs = JSON.parse(backupMCQs);
-            if (Object.keys(parsedBackupMCQs).length > 0) {
-              console.log(
-                "🚀 Recovered MCQ questions from backup:",
-                Object.keys(parsedBackupMCQs).length,
-                "cases"
-              );
-              return parsedBackupMCQs;
-            }
-          } catch (e) {
-            console.log("❌ Failed to parse backup MCQ questions:", e);
-          }
         }
       } catch (e) {
         console.log("❌ Failed to parse cached MCQ questions on init:", e);
@@ -387,14 +343,13 @@ export function Dashboard({}: DashboardProps) {
 
     if (
       !hasMCQs &&
-      // ensure we aren't already generating via either flag
       isGeneratingMCQs !== selectedCase &&
       !isUploading &&
       !mcqAutoAttemptedRef.current.has(selectedCase)
     ) {
       mcqAutoAttemptedRef.current.add(selectedCase);
-      setIsGeneratingMCQs(selectedCase);
-      // Kick off generation using the existing helper
+      console.log("🎯 Auto-generating MCQs for case:", selectedCase);
+
       generateMCQsFromDocument();
     }
   }, [currentView, selectedCase, mcqQuestions, isGeneratingMCQs, isUploading]);
@@ -768,7 +723,30 @@ export function Dashboard({}: DashboardProps) {
           }
           mcqGroups[caseTitle].push(mcq);
         });
-        setMCQQuestions(mcqGroups);
+        setMCQQuestions((prev) => {
+          const merged = {
+            ...prev,
+            ...mcqGroups,
+          };
+          console.log("🔄 MCQ Merge Debug:", {
+            previousCases: Object.keys(prev),
+            newCases: Object.keys(mcqGroups),
+            mergedCases: Object.keys(merged),
+            previousCount: Object.values(prev).reduce(
+              (sum, arr) => sum + arr.length,
+              0
+            ),
+            newCount: Object.values(mcqGroups).reduce(
+              (sum, arr) => sum + arr.length,
+              0
+            ),
+            mergedCount: Object.values(merged).reduce(
+              (sum, arr) => sum + arr.length,
+              0
+            ),
+          });
+          return merged;
+        });
         console.log("✅ Loaded MCQs for active chat:", content.mcqs.length);
       }
 
@@ -1145,14 +1123,17 @@ export function Dashboard({}: DashboardProps) {
           loadActiveChatContent(newActiveChat);
           loadActiveChatMessages(newActiveChat);
         } else {
-          // No chats left, clear everything
-          console.log("🔄 No chats remaining, clearing all state");
+          // No chats left, clear everything except MCQs (preserve user's work)
+          console.log(
+            "🔄 No chats remaining, clearing state but preserving MCQs"
+          );
           setActiveChat("");
           localStorage.removeItem("active_chat");
           navigateToView("main");
           setChatMessages([]);
           setGeneratedCases([]);
-          setMCQQuestions({});
+          // Don't clear MCQ questions - preserve them for user
+          // setMCQQuestions({});
           setGeneratedConcepts({});
           // Clear context chats state
           setContextChats({});
@@ -1188,24 +1169,22 @@ export function Dashboard({}: DashboardProps) {
   useEffect(() => {
     if (typeof window !== "undefined" && Object.keys(mcqQuestions).length > 0) {
       try {
-        // Save to both global and document-specific keys for compatibility
-        localStorage.setItem("mcq_questions", JSON.stringify(mcqQuestions));
-
-        // Also save to document-specific keys for chatbot-flow compatibility
-        Object.entries(mcqQuestions).forEach(([caseTitle, questions]) => {
-          const documentId = getCurrentChatDocument()?.id;
-          if (documentId) {
-            localStorage.setItem(
-              `mcq_questions_${documentId}_${caseTitle}`,
-              JSON.stringify(questions)
-            );
-          }
-        });
-
+        const mcqData = JSON.stringify(mcqQuestions);
+        localStorage.setItem("mcq_questions", mcqData);
         console.log(
           "💾 Saved MCQ questions to localStorage:",
           Object.keys(mcqQuestions).length,
-          "cases"
+          "cases",
+          "Data size:",
+          mcqData.length,
+          "bytes",
+          "Details:",
+          Object.keys(mcqQuestions).map((caseTitle) => ({
+            case: caseTitle,
+            questions: mcqQuestions[caseTitle].length,
+            firstQuestion:
+              mcqQuestions[caseTitle][0]?.question?.substring(0, 50) + "...",
+          }))
         );
       } catch (e) {
         console.log("❌ Failed to save MCQ questions to localStorage:", e);
@@ -1213,24 +1192,19 @@ export function Dashboard({}: DashboardProps) {
     }
   }, [mcqQuestions]);
 
-  // Periodic backup of MCQ questions to prevent data loss
+  // Debug MCQ state changes
   useEffect(() => {
-    if (typeof window !== "undefined" && Object.keys(mcqQuestions).length > 0) {
-      const backupInterval = setInterval(() => {
-        try {
-          localStorage.setItem(
-            "mcq_questions_backup",
-            JSON.stringify(mcqQuestions)
-          );
-          console.log("🔄 MCQ backup saved");
-        } catch (e) {
-          console.log("❌ Failed to backup MCQ questions:", e);
-        }
-      }, 30000); // Backup every 30 seconds
-
-      return () => clearInterval(backupInterval);
-    }
-  }, [mcqQuestions]);
+    console.log("🔍 MCQ State Debug:", {
+      totalCases: Object.keys(mcqQuestions).length,
+      cases: Object.keys(mcqQuestions),
+      selectedCase,
+      hasMCQsForSelectedCase: !!(
+        mcqQuestions[selectedCase] && mcqQuestions[selectedCase].length > 0
+      ),
+      mcqCountForSelectedCase: mcqQuestions[selectedCase]?.length || 0,
+      allMCQData: mcqQuestions,
+    });
+  }, [mcqQuestions, selectedCase]);
 
   // Persist generated concepts to localStorage whenever they change
   useEffect(() => {
@@ -1626,7 +1600,30 @@ export function Dashboard({}: DashboardProps) {
           }
           mcqGroups[caseTitle].push(mcq);
         });
-        setMCQQuestions(mcqGroups);
+        setMCQQuestions((prev) => {
+          const merged = {
+            ...prev,
+            ...mcqGroups,
+          };
+          console.log("🔄 MCQ Merge Debug (2):", {
+            previousCases: Object.keys(prev),
+            newCases: Object.keys(mcqGroups),
+            mergedCases: Object.keys(merged),
+            previousCount: Object.values(prev).reduce(
+              (sum, arr) => sum + arr.length,
+              0
+            ),
+            newCount: Object.values(mcqGroups).reduce(
+              (sum, arr) => sum + arr.length,
+              0
+            ),
+            mergedCount: Object.values(merged).reduce(
+              (sum, arr) => sum + arr.length,
+              0
+            ),
+          });
+          return merged;
+        });
         console.log("✅ Loaded MCQs:", content.mcqs.length);
       }
 
@@ -2049,25 +2046,42 @@ export function Dashboard({}: DashboardProps) {
     try {
       setIsUploading(true);
       setUploadError("");
+      setIsGeneratingMCQs(selectedCase); // Set specific loading state for MCQ generation
+
+      // Show progress indicator
+      setUploadError(
+        "🤖 Generating MCQs with AI... This may take 10-30 seconds."
+      );
 
       // Use the new MCQ API endpoint
       const response = await apiService.generateMCQs(
         currentDocument.id,
         selectedCase, // Pass the selected case title
-        5,
+        5, // Reduced from 5 to 3 for faster generation
         true // Include hints
       );
 
-      // Update the MCQ questions state with full objects for the selected case
+      // Update the MCQ questions state for the selected case
       if (selectedCase) {
-        setMCQQuestions((prev) => ({
-          ...prev,
-          [selectedCase]: response.questions,
-        }));
+        setMCQQuestions((prev) => {
+          const updated = {
+            ...prev,
+            [selectedCase]: response.questions,
+          };
+          console.log("🔄 MCQ State Update:", {
+            case: selectedCase,
+            questionsCount: response.questions.length,
+            totalCases: Object.keys(updated).length,
+            allCases: Object.keys(updated),
+            questions: response.questions,
+          });
+          return updated;
+        });
         console.log(
           "MCQs generated successfully for case:",
           selectedCase,
-          response
+          response.questions.length,
+          "questions"
         );
       } else {
         console.log("No case selected for MCQ generation");
@@ -2077,9 +2091,26 @@ export function Dashboard({}: DashboardProps) {
         error instanceof Error ? error.message : "Failed to generate MCQs";
       console.error("MCQ generation error:", error);
 
-      const isTimeout = errorMessage.toLowerCase().includes("timed out");
+      const isTimeout =
+        errorMessage.toLowerCase().includes("timed out") ||
+        errorMessage.toLowerCase().includes("timeout");
+      const isNetworkError =
+        errorMessage.toLowerCase().includes("failed to fetch") ||
+        errorMessage.toLowerCase().includes("network");
+
       if (isTimeout) {
-        setUploadError("MCQ generation timed out. Please try again.");
+        setUploadError(
+          "MCQ generation timed out (30s limit). The AI is processing complex medical content. Please try again."
+        );
+      } else if (isNetworkError && retryCount < 2) {
+        console.log(
+          `🔄 Retrying MCQ generation due to network issue (attempt ${
+            retryCount + 1
+          }/2)...`
+        );
+        setTimeout(() => {
+          generateMCQsFromDocument(retryCount + 1);
+        }, 3000);
       } else if (retryCount < 1) {
         console.log(
           `🔄 Retrying MCQ generation (attempt ${retryCount + 1}/1)...`
@@ -2088,17 +2119,26 @@ export function Dashboard({}: DashboardProps) {
           generateMCQsFromDocument(retryCount + 1);
         }, 2000);
       } else {
-        setUploadError(`${errorMessage} (Failed after 2 attempts)`);
+        setUploadError(
+          `MCQ generation failed: ${errorMessage}. Please check your connection and try again.`
+        );
       }
     } finally {
       setIsUploading(false);
       setIsGeneratingMCQs(null);
+      console.log("✅ MCQ generation state cleared");
     }
   };
 
   const retryMCQGeneration = async () => {
     if (!selectedCase) {
       console.log("❌ No case selected for MCQ retry");
+      return;
+    }
+
+    // Check if already generating
+    if (isGeneratingMCQs === selectedCase) {
+      console.log("⏳ Already generating MCQs for case:", selectedCase);
       return;
     }
 
@@ -2119,7 +2159,7 @@ export function Dashboard({}: DashboardProps) {
       const mcqResponse = await apiService.generateMCQs(
         currentDocument.id,
         selectedCase, // This is the case title, not ID
-        5 // Generate 5 MCQs per case
+        5 // Generate 4 MCQs per case
       );
 
       console.log("📥 Received MCQ response:", mcqResponse);
@@ -2130,11 +2170,20 @@ export function Dashboard({}: DashboardProps) {
           mcqResponse.questions.length,
           "MCQs"
         );
-        // Persist directly in state; separate effect will sync to localStorage
-        setMCQQuestions((prev) => ({
-          ...prev,
-          [selectedCase]: mcqResponse.questions,
-        }));
+        // Update MCQ questions state
+        setMCQQuestions((prev) => {
+          const updated = {
+            ...prev,
+            [selectedCase]: mcqResponse.questions,
+          };
+          console.log("🔄 MCQ Retry State Update:", {
+            case: selectedCase,
+            questionsCount: mcqResponse.questions.length,
+            totalCases: Object.keys(updated).length,
+            allCases: Object.keys(updated),
+          });
+          return updated;
+        });
 
         // Clear generating state once updated
         setIsGeneratingMCQs(null);
@@ -2242,7 +2291,9 @@ export function Dashboard({}: DashboardProps) {
   const testAPIConnectivity = async () => {
     console.log("Testing API connectivity...");
     try {
-      const response = await fetch("http://localhost:8000/");
+      const response = await fetch(
+        `${process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000"}/`
+      );
       const data = await response.json();
       console.log("Backend response:", data);
       return true;
@@ -2338,7 +2389,7 @@ export function Dashboard({}: DashboardProps) {
         generate_concepts: true,
         generate_titles: true,
         num_cases: 5,
-        num_mcqs: 5, // Generate 5 MCQs per case
+        num_mcqs: 5, // Generate 4 MCQs per case
         num_concepts: 5, // Generate 5 concepts
         num_titles: 5,
       });
@@ -2465,9 +2516,12 @@ export function Dashboard({}: DashboardProps) {
       } else if (errorMessage.includes("500")) {
         errorMessage =
           "Server error: The AI service may be temporarily unavailable. Please try again in a moment.";
-      } else if (errorMessage.includes("Gemini")) {
+      } else if (
+        errorMessage.includes("OpenAI") ||
+        errorMessage.includes("API key")
+      ) {
         errorMessage =
-          "AI service error: Please check your API configuration and try again.";
+          "AI service error: Please check your OpenAI API configuration and try again.";
       }
 
       setUploadError(errorMessage);
@@ -2584,6 +2638,17 @@ export function Dashboard({}: DashboardProps) {
       console.log("🎯 Concept selected:", concept);
       setSelectedConcept(concept);
       localStorage.setItem("selected_concept", concept);
+
+      // Create or get unique context chat for this concept
+      const conceptChatId = await getOrCreateContextChat(undefined, concept);
+      if (conceptChatId) {
+        console.log("🔄 Created/retrieved concept chat:", conceptChatId);
+        // Store the concept chat ID for this concept
+        setContextChats((prev) => ({
+          ...prev,
+          [`concept:${concept}`]: conceptChatId,
+        }));
+      }
 
       // Navigate to the specific concept route
       const conceptId = concept
@@ -2903,6 +2968,14 @@ export function Dashboard({}: DashboardProps) {
 
                 // Generate MCQs on-demand for the selected case
                 if (!mcqQuestions[title] || mcqQuestions[title].length === 0) {
+                  // Check if already generating for this case
+                  if (isGeneratingMCQs === title) {
+                    console.log(
+                      `⏳ Already generating MCQs for case: ${title}, skipping`
+                    );
+                    return;
+                  }
+
                   console.log(
                     `🎯 Generating MCQs on-demand for case: ${title}`
                   );
@@ -2918,7 +2991,7 @@ export function Dashboard({}: DashboardProps) {
                       const mcqResponse = await apiService.generateMCQs(
                         currentDocument.id,
                         title,
-                        5 // Generate 5 MCQs per case
+                        4 // Generate 4 MCQs per case
                       );
 
                       console.log(`📊 MCQ response for ${title}:`, mcqResponse);
@@ -2965,6 +3038,10 @@ export function Dashboard({}: DashboardProps) {
                     );
                   } finally {
                     setIsGeneratingMCQs(null);
+                    console.log(
+                      "✅ MCQ generation state cleared for case:",
+                      title
+                    );
                   }
                 } else {
                   console.log(
@@ -3070,6 +3147,20 @@ export function Dashboard({}: DashboardProps) {
           </div>
         </div>
 
+        {(() => {
+          const hasMCQs =
+            selectedCase &&
+            mcqQuestions[selectedCase] &&
+            mcqQuestions[selectedCase].length > 0;
+          console.log("🔍 MCQ Display Check:", {
+            selectedCase,
+            hasMCQs,
+            mcqCount: mcqQuestions[selectedCase]?.length || 0,
+            mcqData: mcqQuestions[selectedCase],
+            allMCQKeys: Object.keys(mcqQuestions),
+          });
+          return null;
+        })()}
         {selectedCase &&
         mcqQuestions[selectedCase] &&
         mcqQuestions[selectedCase].length > 0 ? (
@@ -3191,20 +3282,40 @@ export function Dashboard({}: DashboardProps) {
             const actualCaseTitle =
               selectedCase ||
               (generatedCases.length > 0 ? generatedCases[0].title : "default");
-            const contextChatId = `${activeChat}-case-${actualCaseTitle}`;
-            console.log(
-              `🎯 Explore Cases - Generated chatId: ${contextChatId}`
-            );
+
+            // Get or create case-specific context chat
+            const caseChatId = contextChats[`case:${actualCaseTitle}`];
+
+            if (!caseChatId) {
+              // Create case-specific context chat
+              getOrCreateContextChat(actualCaseTitle, undefined).then(
+                (chatId) => {
+                  if (chatId) {
+                    setContextChats((prev) => ({
+                      ...prev,
+                      [`case:${actualCaseTitle}`]: chatId,
+                    }));
+                  }
+                }
+              );
+              return (
+                <div className="flex items-center justify-center h-full min-h-[400px]">
+                  <div className="text-center">
+                    <div className="animate-spin rounded-full h-8 w-8 border-4 border-blue-500 border-t-transparent mx-auto mb-4"></div>
+                    <p className="text-gray-600">Creating case chat...</p>
+                  </div>
+                </div>
+              );
+            }
+
+            console.log(`🎯 Explore Cases - Using case chat: ${caseChatId}`);
             console.log(`🎯 Active chat: ${activeChat}`);
             console.log(`🎯 Selected case: ${selectedCase}`);
             console.log(`🎯 Actual case title: ${actualCaseTitle}`);
-            console.log(
-              `🎯 Generated cases:`,
-              generatedCases.map((c) => c.title)
-            );
+
             return (
               <AIChat
-                chatId={contextChatId}
+                chatId={caseChatId}
                 documentId={currentDocument?.id}
                 caseTitle={actualCaseTitle}
                 messages={[]}
@@ -3319,24 +3430,36 @@ export function Dashboard({}: DashboardProps) {
   };
 
   const renderConceptDetail = () => {
-    // If no chats exist, redirect to main view
-    if (chats.length === 0) {
-      console.log(
-        "🎯 No chats available for concept detail, redirecting to main"
-      );
-      navigateToView("main");
+    // If no concept is selected, redirect to concepts list
+    if (!selectedConcept) {
+      console.log("🎯 No concept selected, redirecting to identify-concepts");
+      navigateToView("identify-concepts");
       return null;
     }
 
-    // If no active chat, set the first chat as active
-    if (!activeChat && chats.length > 0) {
-      console.log("🎯 No active chat, setting first chat as active");
-      setActiveChat(chats[0].id);
+    // Get the concept-specific chat ID
+    const conceptChatId = contextChats[`concept:${selectedConcept}`];
+
+    // If no concept chat exists, try to create one
+    if (!conceptChatId) {
+      console.log(
+        "🎯 No concept chat found, creating one for:",
+        selectedConcept
+      );
+      // Trigger concept chat creation
+      getOrCreateContextChat(undefined, selectedConcept).then((chatId) => {
+        if (chatId) {
+          setContextChats((prev) => ({
+            ...prev,
+            [`concept:${selectedConcept}`]: chatId,
+          }));
+        }
+      });
       return (
         <div className="flex items-center justify-center h-full min-h-screen">
           <div className="text-center">
             <div className="animate-spin rounded-full h-8 w-8 border-4 border-blue-500 border-t-transparent mx-auto mb-4"></div>
-            <p className="text-gray-600">Loading chat...</p>
+            <p className="text-gray-600">Creating concept chat...</p>
           </div>
         </div>
       );
@@ -3425,11 +3548,11 @@ export function Dashboard({}: DashboardProps) {
               </p>
             </div>
             <div className="flex-1 min-h-[400px]">
-              {activeChat && (
+              {conceptChatId && (
                 <AIChat
-                  chatId={activeChat}
+                  chatId={conceptChatId}
                   documentId={
-                    chats.find((chat) => chat.id === activeChat)?.document_id
+                    chats.find((chat) => chat.id === conceptChatId)?.document_id
                   }
                   caseTitle={selectedCase}
                 />

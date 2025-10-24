@@ -65,7 +65,7 @@ pnpm dev
 
 4. **Case Generation**
    - AI-powered case scenario generation from uploaded documents
-   - Integration with Gemini AI via backend
+   - Integration with OpenAI GPT-4o mini via backend
    - Dynamic case list updates
    - Multiple difficulty levels and medical specialties
 

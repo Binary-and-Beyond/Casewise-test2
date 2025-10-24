@@ -37,9 +37,22 @@ export function LoginForm({
   // Initialize Google Auth when component mounts
   useEffect(() => {
     const initializeGoogle = () => {
-      const clientId =
-        config.googleClientId ||
-        "667668054845-4e63o2dlu50jlttnetusiukphseo33ck.apps.googleusercontent.com";
+      const clientId = config.googleClientId;
+
+      console.log("🔍 Google OAuth Debug:");
+      console.log("- Client ID:", clientId);
+      console.log(
+        "- Environment variable:",
+        process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID
+      );
+      console.log("- Window location:", window.location.origin);
+
+      if (!clientId) {
+        console.warn(
+          "Google Client ID not configured. Google login will not be available."
+        );
+        return;
+      }
 
       if (
         typeof window !== "undefined" &&

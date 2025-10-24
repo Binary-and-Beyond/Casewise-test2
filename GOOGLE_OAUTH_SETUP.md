@@ -26,11 +26,10 @@ The Google OAuth Client ID is not configured. The environment variables are miss
 2. Click "Create Credentials" → "OAuth 2.0 Client ID"
 3. Choose "Web application"
 4. Add authorized origins:
-   - `http://localhost:3001` (for development)
-   - `http://localhost:3000` (backup)
+   - `http://localhost:3000` (for development)
    - Your production domain (when deploying)
 5. Add authorized redirect URIs:
-   - `http://localhost:3001` (for development)
+   - `http://localhost:3000` (for development)
    - Your production domain (when deploying)
 6. Copy the Client ID
 
@@ -81,7 +80,7 @@ After setting up the environment variables:
 ### If you still get errors:
 
 1. **Check environment variables**: Make sure both `.env.local` and `Casewise-backend/.env` have the correct Client ID
-2. **Verify Google Cloud settings**: Ensure the authorized origins include `http://localhost:3001`
+2. **Verify Google Cloud settings**: Ensure the authorized origins include `http://localhost:3000`
 3. **Check console logs**: Look for any error messages in the browser console
 4. **Restart servers**: Always restart both frontend and backend after changing environment variables
 

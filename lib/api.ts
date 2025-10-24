@@ -412,6 +412,8 @@ class ApiService {
   async googleAuth(idToken: string): Promise<AuthResponse> {
     console.log("🔥 FRONTEND: About to call Google auth");
     console.log("URL:", `${API_BASE_URL}/auth/google`);
+    console.log("Token length:", idToken.length);
+    console.log("Token preview:", idToken.substring(0, 50) + "...");
 
     const response = await fetch(`${API_BASE_URL}/auth/google`, {
       method: "POST",
@@ -425,6 +427,12 @@ class ApiService {
     });
 
     console.log("Google auth response status:", response.status);
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error("Google auth error response:", errorText);
+    }
+
     return this.handleResponse<AuthResponse>(response);
   }
 
@@ -1031,7 +1039,7 @@ class ApiService {
           include_hints: includeHints,
         }),
       },
-      60000 // 60s timeout
+      30000 // 30s timeout
     );
     return this.handleResponse<MCQResponse>(response);
   }

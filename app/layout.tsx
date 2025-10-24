@@ -19,16 +19,32 @@ export default function RootLayout({
   return (
     <html lang="en">
       <head>
+        <meta
+          httpEquiv="Cross-Origin-Opener-Policy"
+          content="same-origin-allow-popups"
+        />
+        <meta httpEquiv="Cross-Origin-Embedder-Policy" content="unsafe-none" />
         <script
           src="https://accounts.google.com/gsi/client"
           async
           defer
-          onLoad="console.log('Google Identity Services loaded')"
-          onError="console.error('Failed to load Google Identity Services')"
         ></script>
         <script
           dangerouslySetInnerHTML={{
             __html: `
+              // Add proper event listeners for Google OAuth script
+              document.addEventListener('DOMContentLoaded', function() {
+                const googleScript = document.querySelector('script[src*="accounts.google.com/gsi/client"]');
+                if (googleScript) {
+                  googleScript.addEventListener('load', function() {
+                    console.log('Google Identity Services loaded successfully');
+                  });
+                  googleScript.addEventListener('error', function() {
+                    console.error('Failed to load Google Identity Services');
+                  });
+                }
+              });
+              
               window.addEventListener('load', function() {
                 if (typeof google === 'undefined') {
                   console.warn('Google Identity Services not loaded after page load');
