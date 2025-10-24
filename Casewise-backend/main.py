@@ -815,45 +815,47 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# CORS middleware - temporarily disabled to use custom middleware
-# app.add_middleware(
-#     CORSMiddleware,
-#     allow_origins=[
-#         "http://localhost:3000",
-#         "http://localhost:3001", 
-#         "http://127.0.0.1:3000",
-#         "http://127.0.0.1:3001",
-#         "http://localhost:8000",
-#         "http://127.0.0.1:8000"
-#     ],
-#     allow_credentials=True,
-#     allow_methods=[
-#         "GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH", "HEAD"
-#     ],
-#     allow_headers=[
-#         "Accept",
-#         "Accept-Language",
-#         "Content-Language",
-#         "Content-Type",
-#         "Authorization",
-#         "X-Requested-With",
-#         "Origin",
-#         "Access-Control-Request-Method",
-#         "Access-Control-Request-Headers",
-#         "Cache-Control",
-#         "Pragma",
-#         "Expires"
-#     ],
-#     expose_headers=[
-#         "Content-Length",
-#         "Content-Type",
-#         "Date",
-#         "Server",
-#         "Access-Control-Allow-Origin",
-#         "Access-Control-Allow-Credentials"
-#     ],
-#     max_age=3600
-# )
+# CORS middleware - backup to custom middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "https://casewise-beta.vercel.app",  # Production frontend
+        "http://localhost:3000",
+        "http://localhost:3001", 
+        "http://127.0.0.1:3000",
+        "http://127.0.0.1:3001",
+        "http://localhost:8000",
+        "http://127.0.0.1:8000"
+    ],
+    allow_credentials=True,
+    allow_methods=[
+        "GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH", "HEAD"
+    ],
+    allow_headers=[
+        "Accept",
+        "Accept-Language",
+        "Content-Language",
+        "Content-Type",
+        "Authorization",
+        "X-Requested-With",
+        "Origin",
+        "Access-Control-Request-Method",
+        "Access-Control-Request-Headers",
+        "Cache-Control",
+        "Pragma",
+        "Expires",
+        "X-Google-Auth-User"
+    ],
+    expose_headers=[
+        "Content-Length",
+        "Content-Type",
+        "Date",
+        "Server",
+        "Access-Control-Allow-Origin",
+        "Access-Control-Allow-Credentials"
+    ],
+    max_age=3600
+)
 
 @app.middleware("http")
 async def cors_handler(request: Request, call_next):
@@ -867,27 +869,34 @@ async def cors_handler(request: Request, call_next):
     ]
     
     # Get the origin from the request
-    origin = request.headers.get("origin", "http://localhost:3000")
+    origin = request.headers.get("origin")
+    print(f"🌐 CORS: Request origin: {origin}")
+    print(f"🌐 CORS: Request method: {request.method}")
+    print(f"🌐 CORS: Request URL: {request.url}")
     
     # Check if origin is allowed
-    if origin in allowed_origins:
+    if origin and origin in allowed_origins:
         allowed_origin = origin
+        print(f"✅ CORS: Allowed origin: {allowed_origin}")
     else:
         # Default to production frontend for unknown origins
         allowed_origin = "https://casewise-beta.vercel.app"
-        print(f"⚠️ Unknown origin: {origin}, defaulting to production frontend")
+        print(f"⚠️ CORS: Unknown origin: {origin}, defaulting to production frontend")
     
     # Handle preflight OPTIONS requests
     if request.method == "OPTIONS":
+        print("🔄 CORS: Handling preflight OPTIONS request")
         response = Response()
         response.headers["Access-Control-Allow-Origin"] = allowed_origin
         response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS, PATCH, HEAD"
         response.headers["Access-Control-Allow-Headers"] = "Accept, Accept-Language, Content-Language, Content-Type, Authorization, X-Requested-With, Origin, Access-Control-Request-Method, Access-Control-Request-Headers, Cache-Control, Pragma, Expires, X-Google-Auth-User"
         response.headers["Access-Control-Allow-Credentials"] = "true"
         response.headers["Access-Control-Max-Age"] = "3600"
+        print(f"✅ CORS: Preflight response headers: {dict(response.headers)}")
         return response
     
     # Process the request
+    print("🔄 CORS: Processing request")
     response = await call_next(request)
     
     # Add CORS headers to all responses
@@ -896,6 +905,7 @@ async def cors_handler(request: Request, call_next):
     response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS, PATCH, HEAD"
     response.headers["Access-Control-Allow-Headers"] = "Accept, Accept-Language, Content-Language, Content-Type, Authorization, X-Requested-With, Origin, Access-Control-Request-Method, Access-Control-Request-Headers, Cache-Control, Pragma, Expires, X-Google-Auth-User"
     
+    print(f"✅ CORS: Response headers added: {dict(response.headers)}")
     return response
 
 @app.middleware("http")
@@ -2559,7 +2569,8 @@ async def generate_case_titles(
                 {"role": "user", "content": system_prompt}
             ],
             temperature=0.7,
-            max_tokens=2000
+            max_tokens=2000,
+            timeout=120  # 2 minutes timeout for case title generation
         )
         
         # Parse the response
@@ -2667,7 +2678,7 @@ Return JSON array only:
                 ],
                 temperature=0.2,  # Even lower temperature for faster, more consistent responses
                 max_tokens=1200,  # Further reduced token limit for faster generation
-                timeout=25  # Reduced timeout to prevent hanging
+                timeout=120  # Increased timeout to 2 minutes for concept generation
             )
         except Exception as e:
             print(f"OpenAI API error: {e}")
@@ -2680,7 +2691,7 @@ Return JSON array only:
                 ],
                 temperature=0.1,
                 max_tokens=800,
-                timeout=15
+                timeout=60  # Increased timeout to 1 minute for fallback generation
             )
         
         # Parse the response
@@ -2803,7 +2814,8 @@ async def identify_concepts(
                 {"role": "user", "content": system_prompt}
             ],
             temperature=0.7,
-            max_tokens=2000
+            max_tokens=2000,
+            timeout=120  # 2 minutes timeout for concept identification
         )
         
         # Parse the response

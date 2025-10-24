@@ -210,22 +210,37 @@ class ApiService {
     init: RequestInit,
     timeoutMs: number
   ): Promise<Response> {
+    console.log(`🔧 fetchWithTimeout called with timeout: ${timeoutMs}ms`);
+    console.log(`🔧 Timeout in seconds: ${timeoutMs / 1000}s`);
+
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+    const timeoutId = setTimeout(() => {
+      console.log(`⏰ Timeout triggered after ${timeoutMs}ms`);
+      controller.abort();
+    }, timeoutMs);
+
     try {
       // If caller already passed a signal, prefer theirs (do not override)
       const response = await fetch(input, {
         ...init,
         signal: init.signal ?? controller.signal,
       });
+      console.log(`✅ fetchWithTimeout completed successfully`);
       return response;
     } catch (error: any) {
+      console.log(`❌ fetchWithTimeout error:`, error.message);
+      console.log(`❌ Error name:`, error?.name);
+      console.log(`❌ Is AbortError:`, error?.name === "AbortError");
+
       if (
         error?.name === "AbortError" ||
         (typeof error?.message === "string" &&
           error.message.toLowerCase().includes("aborted"))
       ) {
-        throw new Error("Request timed out. Please try again.");
+        console.log(`⏰ Throwing timeout error after ${timeoutMs}ms`);
+        throw new Error(
+          `Request timed out after ${timeoutMs}ms. Please try again.`
+        );
       }
       throw error;
     } finally {
@@ -233,14 +248,69 @@ class ApiService {
     }
   }
 
+  private async fetchWithRetry(
+    endpoint: string,
+    init: RequestInit,
+    timeoutMs: number = 180000, // 3 minutes default
+    maxRetries: number = 2
+  ): Promise<Response> {
+    let lastError: any;
+
+    console.log(`🎯 Starting retry mechanism for ${endpoint}`);
+    console.log(`⏰ Timeout set to: ${timeoutMs}ms (${timeoutMs / 1000}s)`);
+    console.log(`🔄 Max retries: ${maxRetries}`);
+
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        console.log(
+          `🔄 Attempt ${attempt + 1}/${maxRetries + 1} for ${endpoint}`
+        );
+        console.log(`⏰ Using timeout: ${timeoutMs}ms for this attempt`);
+
+        const response = await this.fetchWithFallback(
+          endpoint,
+          init,
+          timeoutMs
+        );
+        console.log(`✅ Success on attempt ${attempt + 1}`);
+        return response;
+      } catch (error: any) {
+        lastError = error;
+        console.log(`❌ Attempt ${attempt + 1} failed:`, error.message);
+        console.log(`❌ Error type:`, typeof error.message);
+        console.log(
+          `❌ Error includes timeout:`,
+          error.message.includes("timed out")
+        );
+
+        // If it's not the last attempt, wait before retrying
+        if (attempt < maxRetries) {
+          const delay = Math.pow(2, attempt) * 1000; // Exponential backoff: 1s, 2s, 4s
+          console.log(`⏳ Waiting ${delay}ms before retry...`);
+          await new Promise((resolve) => setTimeout(resolve, delay));
+        }
+      }
+    }
+
+    // All attempts failed
+    console.log(`❌ All ${maxRetries + 1} attempts failed for ${endpoint}`);
+    console.log(`❌ Final error:`, lastError?.message);
+    throw lastError;
+  }
+
   private async fetchWithFallback(
     endpoint: string,
     init: RequestInit,
-    timeoutMs: number = 10000
+    timeoutMs: number = 180000 // 3 minutes default
   ): Promise<Response> {
+    console.log(`🔧 fetchWithFallback called with timeout: ${timeoutMs}ms`);
+
     // Try primary API first
     try {
       console.log("🌐 Trying primary API:", `${API_BASE_URL}${endpoint}`);
+      console.log("⏰ Timeout set to:", timeoutMs, "ms");
+      console.log("⏰ Timeout in seconds:", timeoutMs / 1000, "s");
+
       const response = await this.fetchWithTimeout(
         `${API_BASE_URL}${endpoint}`,
         init,
@@ -260,12 +330,22 @@ class ApiService {
     } catch (error: any) {
       console.log("❌ Primary API failed:", error.message);
 
+      // Check if it's a timeout error
+      if (
+        error.message.includes("timed out") ||
+        error.message.includes("timeout")
+      ) {
+        console.log("⏰ Primary API timed out, trying fallback...");
+      }
+
       // Try fallback API
       try {
         console.log(
           "🌐 Trying fallback API:",
           `${FALLBACK_API_BASE_URL}${endpoint}`
         );
+        console.log("⏰ Fallback timeout set to:", timeoutMs, "ms");
+
         const fallbackResponse = await this.fetchWithTimeout(
           `${FALLBACK_API_BASE_URL}${endpoint}`,
           init,
@@ -275,6 +355,17 @@ class ApiService {
         return fallbackResponse;
       } catch (fallbackError: any) {
         console.log("❌ Fallback API also failed:", fallbackError.message);
+
+        // Provide more detailed error information
+        if (
+          fallbackError.message.includes("timed out") ||
+          fallbackError.message.includes("timeout")
+        ) {
+          throw new Error(
+            `Request timed out after ${timeoutMs}ms. Both primary and fallback APIs failed. Please try again.`
+          );
+        }
+
         // Return the original error (from primary API)
         throw error;
       }
@@ -1063,13 +1154,25 @@ class ApiService {
     documentId: string,
     numCases: number = 5
   ): Promise<CaseTitlesResponse> {
-    const response = await fetch(`${API_BASE_URL}/ai/generate-case-titles`, {
-      method: "POST",
-      headers: this.getHeaders(),
-      mode: "cors",
-      credentials: "include",
-      body: JSON.stringify({ document_id: documentId, num_cases: numCases }),
-    });
+    console.log(
+      "🎯 Starting case title generation with enhanced timeout handling..."
+    );
+    console.log("📊 Document ID:", documentId);
+    console.log("📊 Number of cases:", numCases);
+
+    // Use fetchWithRetry for robust timeout handling with retries
+    const response = await this.fetchWithRetry(
+      "/ai/generate-case-titles",
+      {
+        method: "POST",
+        headers: this.getHeaders(),
+        mode: "cors",
+        credentials: "include",
+        body: JSON.stringify({ document_id: documentId, num_cases: numCases }),
+      },
+      180000, // 3 minutes timeout for case title generation (increased)
+      3 // 3 retries (increased)
+    );
     return this.handleResponse<CaseTitlesResponse>(response);
   }
 
@@ -1079,9 +1182,9 @@ class ApiService {
     numQuestions: number = 3,
     includeHints: boolean = true
   ): Promise<MCQResponse> {
-    // Apply a client-side timeout to avoid hanging indefinitely on long generations
-    const response = await this.fetchWithTimeout(
-      `${API_BASE_URL}/ai/generate-mcqs`,
+    // Use fetchWithFallback for automatic failover and timeout handling
+    const response = await this.fetchWithFallback(
+      "/ai/generate-mcqs",
       {
         method: "POST",
         headers: this.getHeaders(),
@@ -1094,7 +1197,7 @@ class ApiService {
           include_hints: includeHints,
         }),
       },
-      30000 // 30s timeout
+      60000 // 1 minute timeout (increased from 30s)
     );
     return this.handleResponse<MCQResponse>(response);
   }
@@ -1103,16 +1206,28 @@ class ApiService {
     documentId: string,
     numConcepts: number = 3
   ): Promise<ConceptResponse> {
-    const response = await fetch(`${API_BASE_URL}/ai/identify-concepts`, {
-      method: "POST",
-      headers: this.getHeaders(),
-      mode: "cors",
-      credentials: "include",
-      body: JSON.stringify({
-        document_id: documentId,
-        num_concepts: numConcepts,
-      }),
-    });
+    console.log(
+      "🎯 Starting concept identification with enhanced timeout handling..."
+    );
+    console.log("📊 Document ID:", documentId);
+    console.log("📊 Number of concepts:", numConcepts);
+
+    // Use fetchWithRetry for robust timeout handling with retries
+    const response = await this.fetchWithRetry(
+      "/ai/identify-concepts",
+      {
+        method: "POST",
+        headers: this.getHeaders(),
+        mode: "cors",
+        credentials: "include",
+        body: JSON.stringify({
+          document_id: documentId,
+          num_concepts: numConcepts,
+        }),
+      },
+      180000, // 3 minutes timeout for concept identification (increased)
+      3 // 3 retries (increased)
+    );
     return this.handleResponse<ConceptResponse>(response);
   }
 
@@ -1120,25 +1235,35 @@ class ApiService {
     request: AutoGenerationRequest
   ): Promise<AutoGenerationResponse> {
     return handleRateLimit(async () => {
-      const response = await fetch(`${API_BASE_URL}/ai/auto-generate`, {
-        method: "POST",
-        headers: this.getHeaders(),
-        mode: "cors",
-        credentials: "include",
-        body: JSON.stringify(request),
-      });
+      // Use fetchWithFallback for automatic failover and timeout handling
+      const response = await this.fetchWithFallback(
+        "/ai/auto-generate",
+        {
+          method: "POST",
+          headers: this.getHeaders(),
+          mode: "cors",
+          credentials: "include",
+          body: JSON.stringify(request),
+        },
+        180000 // 3 minutes timeout for auto generation (longer since it can do multiple tasks)
+      );
       return this.handleResponse<AutoGenerationResponse>(response);
     });
   }
 
   async quickGenerateContent(request: AutoGenerationRequest): Promise<any> {
-    const response = await fetch(`${API_BASE_URL}/ai/quick-generate`, {
-      method: "POST",
-      headers: this.getHeaders(),
-      mode: "cors",
-      credentials: "include",
-      body: JSON.stringify(request),
-    });
+    // Use fetchWithFallback for automatic failover and timeout handling
+    const response = await this.fetchWithFallback(
+      "/ai/quick-generate",
+      {
+        method: "POST",
+        headers: this.getHeaders(),
+        mode: "cors",
+        credentials: "include",
+        body: JSON.stringify(request),
+      },
+      120000 // 2 minutes timeout for quick generation
+    );
     return this.handleResponse<any>(response);
   }
 
