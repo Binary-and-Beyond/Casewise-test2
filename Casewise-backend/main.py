@@ -298,6 +298,7 @@ def create_admin_user():
             "hashed_password": hashed_password,
             "role": "admin",
             "is_active": True,
+            "status": "active",
             "created_at": datetime.utcnow(),
             "updated_at": datetime.utcnow()
         }
@@ -381,6 +382,16 @@ class PasswordChangeRequest(BaseModel):
     """Password change request schema"""
     current_password: str
     new_password: str = Field(..., min_length=6)
+
+class AdminUserUpdateRequest(BaseModel):
+    """Admin user update request schema"""
+    user_id: str
+    role: Optional[str] = Field(None, pattern="^(user|admin)$")
+    status: Optional[str] = Field(None, pattern="^(active|inactive|suspended)$")
+
+class AdminBulkUserUpdateRequest(BaseModel):
+    """Admin bulk user update request schema"""
+    updates: List[AdminUserUpdateRequest]
 
 class ForgotPasswordRequest(BaseModel):
     """Forgot password request schema"""
@@ -479,6 +490,7 @@ class MCQRequest(BaseModel):
     case_title: Optional[str] = None
     num_questions: int = Field(default=3, ge=1, le=10)
     include_hints: bool = Field(default=True)
+    difficulty: Optional[str] = Field(default=None, description="Difficulty level: Easy, Moderate, or Hard")
 
 class MCQOption(BaseModel):
     """MCQ option schema"""
@@ -961,6 +973,13 @@ def health_check():
         "timestamp": datetime.utcnow().isoformat()
     }
 
+@app.get("/admin/test")
+def admin_test():
+    return {
+        "message": "Admin endpoint is working",
+        "timestamp": datetime.utcnow().isoformat()
+    }
+
 @app.post("/signup", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
 def signup(user_data: UserSignup):
     print("SIGNUP ENDPOINT CALLED")
@@ -994,6 +1013,8 @@ def signup(user_data: UserSignup):
             "hashed_password": hashed_password,
             "full_name": user_data.full_name,
             "is_active": True,
+            "status": "active",
+            "role": "user",
             "created_at": datetime.utcnow()
         }
         
@@ -1370,12 +1391,24 @@ def get_all_users(current_user: dict = Depends(get_current_user)):
             else:
                 last_active_date = datetime.now().strftime("%Y-%m-%d")
             
+            # Determine status based on is_active and status fields
+            is_active = user.get("is_active", True)
+            status_field = user.get("status")
+            
+            if status_field:
+                user_status = status_field
+            elif is_active:
+                user_status = "active"
+            else:
+                user_status = "inactive"
+
             user_data = {
                 "id": str(user["_id"]),
                 "email": user["email"],
                 "username": user["username"],
                 "full_name": user.get("full_name"),
                 "role": user.get("role", "user"),
+                "status": user_status,
                 "created_at": user["created_at"].strftime("%Y-%m-%d") if user.get("created_at") else "N/A",
                 "last_active": last_active_date,
                 "time_spent": time_spent,
@@ -1395,6 +1428,94 @@ def get_all_users(current_user: dict = Depends(get_current_user)):
     except Exception as e:
         print(f"Error fetching users: {e}")
         raise HTTPException(status_code=500, detail="Failed to fetch users data")
+
+@app.put("/admin/users/update")
+async def admin_update_users(
+    request: AdminBulkUserUpdateRequest,
+    current_user: dict = Depends(get_current_user)
+):
+    """Update multiple users' roles and status - admin only"""
+    
+    print(f"🔍 Admin update endpoint called by user: {current_user.get('id', 'unknown')}")
+    print(f"🔍 User role: {current_user.get('role', 'unknown')}")
+    print(f"🔍 Request data: {request}")
+    
+    # Check if current user is admin
+    if current_user.get("role") != "admin":
+        print("❌ Access denied - user is not admin")
+        raise HTTPException(status_code=403, detail="Admin access required")
+    
+    print(f"🔄 Admin bulk user update request from user: {current_user['id']}")
+    print(f"📊 Updates to process: {len(request.updates)}")
+    
+    try:
+        updated_users = []
+        errors = []
+        
+        for update in request.updates:
+            try:
+                # Validate user exists
+                user = db.users.find_one({"_id": ObjectId(update.user_id)})
+                if not user:
+                    errors.append(f"User {update.user_id} not found")
+                    continue
+                
+                # Prepare update data
+                update_data = {}
+                if update.role is not None:
+                    update_data["role"] = update.role
+                if update.status is not None:
+                    # Map status to is_active field
+                    if update.status == "active":
+                        update_data["is_active"] = True
+                        update_data["status"] = "active"
+                    elif update.status == "inactive":
+                        update_data["is_active"] = False
+                        update_data["status"] = "inactive"
+                    elif update.status == "suspended":
+                        update_data["is_active"] = False
+                        update_data["status"] = "suspended"
+                
+                if not update_data:
+                    errors.append(f"No valid fields to update for user {update.user_id}")
+                    continue
+                
+                update_data["updated_at"] = datetime.utcnow()
+                
+                # Update user in database
+                result = db.users.update_one(
+                    {"_id": ObjectId(update.user_id)},
+                    {"$set": update_data}
+                )
+                
+                if result.modified_count > 0:
+                    updated_users.append({
+                        "user_id": update.user_id,
+                        "email": user["email"],
+                        "username": user["username"],
+                        "updates": update_data
+                    })
+                    print(f"✅ Updated user {update.user_id}: {update_data}")
+                else:
+                    errors.append(f"Failed to update user {update.user_id}")
+                    
+            except Exception as e:
+                error_msg = f"Error updating user {update.user_id}: {str(e)}"
+                errors.append(error_msg)
+                print(f"❌ {error_msg}")
+        
+        print(f"📊 Update summary: {len(updated_users)} successful, {len(errors)} errors")
+        
+        return {
+            "message": f"Updated {len(updated_users)} users successfully",
+            "updated_users": updated_users,
+            "errors": errors,
+            "total_processed": len(request.updates)
+        }
+        
+    except Exception as e:
+        print(f"❌ Error in admin bulk user update: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to update users")
 
 @app.put("/profile", response_model=UserResponse)
 async def update_profile(
@@ -2617,6 +2738,8 @@ async def generate_mcqs(
 ):
     """Generate MCQ questions from a document or case using OpenAI GPT-4 mini"""
     
+    print(f"🎯 MCQ Generation Request - Difficulty: {request.difficulty}, Case: {request.case_title}")
+    
     if not OPENAI_API_KEY:
         raise HTTPException(status_code=500, detail="OpenAI API key not configured")
     
@@ -2647,6 +2770,18 @@ async def generate_mcqs(
         if request.case_title:
             case_context = f"\n\nSpecific Case Focus: {request.case_title}\nGenerate MCQs specifically related to this case scenario."
         
+        # Build difficulty instruction - make it very explicit
+        difficulty_instruction = ""
+        if request.difficulty:
+            difficulty_instruction = f"""
+CRITICAL DIFFICULTY REQUIREMENT:
+- ALL {request.num_questions} questions MUST be {request.difficulty} difficulty level
+- DO NOT mix difficulty levels
+- EVERY single question must be {request.difficulty}
+- This is mandatory and non-negotiable"""
+        else:
+            difficulty_instruction = "\n- Assign difficulty (Easy/Moderate/Hard)"
+        
         # Build hint instruction based on request
         hint_instruction = ""
         hint_field = ""
@@ -2654,29 +2789,34 @@ async def generate_mcqs(
             hint_instruction = "\n        - Include helpful hints that guide students toward the correct answer without giving it away"
             hint_field = ',\n                "hint": "Helpful hint that guides toward the correct answer without revealing it"'
         
-        system_prompt = f"""Generate {request.num_questions} medical MCQ questions from this content:{case_context}
+        system_prompt = f"""You are a medical educator. Generate {request.num_questions} medical MCQ questions from this content:{case_context}
 
 Content: {document_context[:500]}
+
+{difficulty_instruction}
 
 Requirements:
 - 4 options per question (A, B, C, D)
 - One correct answer
 - Include explanations
-- Assign difficulty (Easy/Moderate/Hard)
 - Focus on key medical concepts{hint_instruction}
 
-Return JSON array only:
-[{{"id": "mcq_1", "question": "Question text?", "options": [{{"id": "A", "text": "Option A", "is_correct": false}}, {{"id": "B", "text": "Correct answer", "is_correct": true}}, {{"id": "C", "text": "Option C", "is_correct": false}}, {{"id": "D", "text": "Option D", "is_correct": false}}], "explanation": "Brief explanation", "difficulty": "Moderate"{hint_field}}}]"""
+CRITICAL: ALL questions must have EXACTLY the same difficulty level: "{request.difficulty or 'Moderate'}"
+
+Example of correct format (ALL questions must follow this pattern):
+[{{"id": "mcq_1", "question": "What is...?", "options": [{{"id": "A", "text": "Option A", "is_correct": false}}, {{"id": "B", "text": "Correct answer", "is_correct": true}}, {{"id": "C", "text": "Option C", "is_correct": false}}, {{"id": "D", "text": "Option D", "is_correct": false}}], "explanation": "Explanation here", "difficulty": "{request.difficulty or 'Moderate'}"{hint_field}}}, {{"id": "mcq_2", "question": "Another question?", "options": [{{"id": "A", "text": "Option A", "is_correct": true}}, {{"id": "B", "text": "Option B", "is_correct": false}}, {{"id": "C", "text": "Option C", "is_correct": false}}, {{"id": "D", "text": "Option D", "is_correct": false}}], "explanation": "Another explanation", "difficulty": "{request.difficulty or 'Moderate'}"{hint_field}}}]
+
+Return JSON array only with ALL questions having difficulty: "{request.difficulty or 'Moderate'}" """
         
         # Generate response from OpenAI with optimized settings
         try:
             response = openai_client.chat.completions.create(
                 model="gpt-4o-mini",
                 messages=[
-                    {"role": "system", "content": "You are a medical educator. Always respond with valid JSON format."},
+                    {"role": "system", "content": f"You are a medical educator. Generate ALL questions with EXACTLY the same difficulty: {request.difficulty or 'Moderate'}. Always respond with valid JSON format."},
                     {"role": "user", "content": system_prompt}
                 ],
-                temperature=0.2,  # Even lower temperature for faster, more consistent responses
+                temperature=0.1,  # Very low temperature for maximum consistency
                 max_tokens=1200,  # Further reduced token limit for faster generation
                 timeout=120  # Increased timeout to 2 minutes for concept generation
             )
@@ -2686,8 +2826,8 @@ Return JSON array only:
             response = openai_client.chat.completions.create(
                 model="gpt-4o-mini",
                 messages=[
-                    {"role": "system", "content": "Generate medical MCQs in JSON format."},
-                    {"role": "user", "content": f"Create {request.num_questions} medical MCQs from: {document_context[:800]}"}
+                    {"role": "system", "content": f"Generate medical MCQs in JSON format. ALL questions must have difficulty: {request.difficulty or 'Moderate'}"},
+                    {"role": "user", "content": f"Create {request.num_questions} medical MCQs from: {document_context[:800]}. ALL questions must be {request.difficulty or 'Moderate'} difficulty."}
                 ],
                 temperature=0.1,
                 max_tokens=800,
@@ -2723,21 +2863,48 @@ Return JSON array only:
                     {"id": "E", "text": "Option E", "is_correct": False}
                 ],
                 "explanation": "This is based on the document content.",
-                "difficulty": "Moderate"
+                "difficulty": request.difficulty or "Moderate"
             } for i in range(request.num_questions)]
         
         # Convert to MCQQuestion objects
         questions = []
         for mcq_data in mcqs_data[:request.num_questions]:
             options = [MCQOption(**option) for option in mcq_data["options"]]
+            
+            # BULLETPROOF: Completely ignore AI's difficulty and force case difficulty
+            if request.difficulty:
+                # Always use the case difficulty, completely ignore what AI returned
+                question_difficulty = request.difficulty
+                print(f"🔒 Forcing difficulty to case difficulty: '{request.difficulty}' (ignoring AI's '{mcq_data.get('difficulty', 'unknown')}')")
+            else:
+                question_difficulty = mcq_data.get("difficulty", "Moderate")
+            
             question = MCQQuestion(
                 id=mcq_data["id"],
                 question=mcq_data["question"],
                 options=options,
                 explanation=mcq_data["explanation"],
-                difficulty=mcq_data["difficulty"]
+                difficulty=question_difficulty  # This will ALWAYS be the case difficulty
             )
             questions.append(question)
+        
+        # Final validation: Ensure ALL questions have the same difficulty
+        if request.difficulty:
+            for i, question in enumerate(questions):
+                if question.difficulty != request.difficulty:
+                    print(f"🚨 CRITICAL: Question {i} has wrong difficulty '{question.difficulty}', forcing to '{request.difficulty}'")
+                    question.difficulty = request.difficulty
+        
+        # Log the final difficulties for debugging
+        difficulties = [q.difficulty for q in questions]
+        unique_difficulties = set(difficulties)
+        print(f"✅ Final MCQ difficulties: {difficulties}")
+        print(f"✅ Unique difficulties: {unique_difficulties}")
+        
+        if len(unique_difficulties) > 1:
+            print(f"🚨 ERROR: Still have mixed difficulties: {unique_difficulties}")
+        else:
+            print(f"✅ SUCCESS: All questions have consistent difficulty: {list(unique_difficulties)[0]}")
         
         return MCQResponse(
             questions=questions,
@@ -4225,6 +4392,98 @@ async def get_or_create_context_chat(
     except Exception as e:
         print(f"❌ Error creating context chat: {e}")
         raise HTTPException(status_code=500, detail=f"Error creating context chat: {str(e)}")
+
+
+# Dynamic hint generation endpoint
+class DynamicHintRequest(BaseModel):
+    question_id: str
+    question_text: str
+    options: List[MCQOption]
+    user_attempts: int = 1
+    document_context: Optional[str] = None
+
+class DynamicHintResponse(BaseModel):
+    hint: str
+    generated_at: str
+
+@app.post("/ai/generate-dynamic-hint", response_model=DynamicHintResponse)
+async def generate_dynamic_hint(
+    request: DynamicHintRequest,
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Generate a dynamic hint for an MCQ question based on user attempts and context.
+    """
+    try:
+        if not openai_client:
+            raise HTTPException(status_code=500, detail="OpenAI client not initialized")
+        
+        # Get document context if available
+        document_context = ""
+        if request.document_context:
+            document_context = f"\n\nDocument Context: {request.document_context[:1000]}"
+        
+        # Create context-aware hint based on attempt number
+        attempt_context = ""
+        if request.user_attempts == 1:
+            attempt_context = "This is the first attempt. Provide a gentle hint that guides toward the correct answer without revealing it."
+        elif request.user_attempts == 2:
+            attempt_context = "This is the second attempt. Provide a more specific hint that narrows down the options."
+        else:
+            attempt_context = "This is the third attempt. Provide a detailed hint that strongly guides toward the correct answer."
+        
+        # Build the prompt for dynamic hint generation
+        system_prompt = f"""You are a medical educator. Generate a helpful hint for this MCQ question.
+
+Question: {request.question_text}
+
+Options:
+{chr(10).join([f"{opt.id}. {opt.text}" for opt in request.options])}
+
+Context: {attempt_context}{document_context}
+
+Requirements:
+- Provide a hint that guides the student toward the correct answer
+- Make the hint more specific based on the attempt number
+- Do not reveal the correct answer directly
+- Keep the hint concise (1-2 sentences)
+- Focus on key medical concepts or reasoning
+
+Generate only the hint text, no additional formatting."""
+
+        # Generate response from OpenAI
+        response = openai_client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": "You are a medical educator. Provide helpful, educational hints."},
+                {"role": "user", "content": system_prompt}
+            ],
+            temperature=0.7,
+            max_tokens=200,
+            timeout=30  # 30 seconds timeout for hint generation
+        )
+        
+        hint_text = response.choices[0].message.content.strip()
+        
+        return DynamicHintResponse(
+            hint=hint_text,
+            generated_at=datetime.now().isoformat()
+        )
+        
+    except Exception as e:
+        print(f"Dynamic hint generation error: {e}")
+        # Fallback hint
+        fallback_hints = [
+            "Consider the key medical concepts mentioned in the question.",
+            "Think about the most common clinical presentation or treatment approach.",
+            "Review the fundamental principles related to this medical topic."
+        ]
+        fallback_hint = fallback_hints[min(request.user_attempts - 1, len(fallback_hints) - 1)]
+        
+        return DynamicHintResponse(
+            hint=fallback_hint,
+            generated_at=datetime.now().isoformat()
+        )
 
 
 @app.get("/")

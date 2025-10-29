@@ -155,6 +155,19 @@ export interface MCQResponse {
   generated_at: string;
 }
 
+export interface DynamicHintRequest {
+  question_id: string;
+  question_text: string;
+  options: MCQOption[];
+  user_attempts: number;
+  document_context?: string;
+}
+
+export interface DynamicHintResponse {
+  hint: string;
+  generated_at: string;
+}
+
 export interface Concept {
   id: string;
   title: string;
@@ -755,14 +768,47 @@ class ApiService {
       console.log(
         "🌐 API: Update analytics response not ok, trying to get error details..."
       );
-      try {
-        const errorText = await response.text();
-        console.log("🌐 API: Update analytics error response text:", errorText);
-      } catch (e) {
-        console.log("🌐 API: Could not read update analytics error response");
-      }
-      throw new Error(`Failed to update analytics: ${response.statusText}`);
+      const errorText = await response.text();
+      console.log("🌐 API: Update analytics error response:", errorText);
+      throw new Error(`Failed to update analytics: ${response.status}`);
     }
+
+    return this.handleResponse<any>(response);
+  }
+
+  async updateUsers(data: {
+    updates: Array<{
+      user_id: string;
+      role?: string;
+      status?: string;
+    }>;
+  }): Promise<any> {
+    console.log("🌐 API: Updating users...");
+    console.log("🌐 API: Data:", data);
+    console.log("🌐 API: Headers:", this.getHeaders());
+    console.log("🌐 API: Base URL:", API_BASE_URL);
+    console.log("🌐 API: Full URL:", `${API_BASE_URL}/admin/users/update`);
+
+    const response = await fetch(`${API_BASE_URL}/admin/users/update`, {
+      method: "PUT",
+      headers: this.getHeaders(),
+      mode: "cors",
+      credentials: "include",
+      body: JSON.stringify(data),
+    });
+
+    console.log("🌐 API: Update users response status:", response.status);
+    console.log("🌐 API: Update users response ok:", response.ok);
+
+    if (!response.ok) {
+      console.log(
+        "🌐 API: Update users response not ok, trying to get error details..."
+      );
+      const errorText = await response.text();
+      console.log("🌐 API: Update users error response:", errorText);
+      throw new Error(`Failed to update users: ${response.status}`);
+    }
+
     return this.handleResponse<any>(response);
   }
 
@@ -1180,7 +1226,8 @@ class ApiService {
     documentId?: string,
     caseTitle?: string,
     numQuestions: number = 3,
-    includeHints: boolean = true
+    includeHints: boolean = true,
+    difficulty?: string
   ): Promise<MCQResponse> {
     // Use fetchWithFallback for automatic failover and timeout handling
     const response = await this.fetchWithFallback(
@@ -1195,6 +1242,7 @@ class ApiService {
           case_title: caseTitle,
           num_questions: numQuestions,
           include_hints: includeHints,
+          difficulty: difficulty,
         }),
       },
       60000 // 1 minute timeout (increased from 30s)
@@ -1229,6 +1277,31 @@ class ApiService {
       3 // 3 retries (increased)
     );
     return this.handleResponse<ConceptResponse>(response);
+  }
+
+  async generateDynamicHint(
+    request: DynamicHintRequest
+  ): Promise<DynamicHintResponse> {
+    console.log(
+      "🎯 Generating dynamic hint for question:",
+      request.question_id
+    );
+    console.log("📊 User attempts:", request.user_attempts);
+
+    // Use fetchWithRetry for robust timeout handling
+    const response = await this.fetchWithRetry(
+      "/ai/generate-dynamic-hint",
+      {
+        method: "POST",
+        headers: this.getHeaders(),
+        mode: "cors",
+        credentials: "include",
+        body: JSON.stringify(request),
+      },
+      30000, // 30 seconds timeout for hint generation
+      2 // 2 retries
+    );
+    return this.handleResponse<DynamicHintResponse>(response);
   }
 
   async autoGenerateContent(

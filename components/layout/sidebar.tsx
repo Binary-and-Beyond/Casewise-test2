@@ -125,7 +125,11 @@ export function Sidebar({
 
         <button
           onClick={() => setCurrentView("admin-analytics")}
-          className="text-sm font-medium text-gray-700 hover:text-blue-600 cursor-pointer"
+          className={`text-sm text-left w-full font-medium cursor-pointer px-3 py-2 rounded-lg transition-colors ${
+            currentView === "admin-analytics"
+              ? "bg-blue-500 text-white"
+              : "text-gray-700 hover:text-blue-600 hover:bg-blue-50"
+          }`}
         >
           {user?.role === "admin" ? "Admin Analytics" : "My Analytics"}
         </button>

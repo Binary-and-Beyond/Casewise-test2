@@ -38,9 +38,28 @@ export function ProfileSettings({ onBack }: ProfileSettingsProps) {
   // Load user data when component mounts
   useEffect(() => {
     if (user) {
+      // Parse full_name if first_name and last_name are not available
+      let firstName = user.first_name || "";
+      let lastName = user.last_name || "";
+      let needsBackendUpdate = false;
+
+      // If first_name and last_name are empty but full_name exists, parse it
+      if ((!firstName || !lastName) && user.full_name) {
+        const nameParts = user.full_name.trim().split(" ");
+        if (nameParts.length >= 2) {
+          firstName = nameParts[0];
+          lastName = nameParts.slice(1).join(" "); // Join remaining parts as last name
+          needsBackendUpdate = true;
+        } else if (nameParts.length === 1) {
+          firstName = nameParts[0];
+          lastName = "";
+          needsBackendUpdate = true;
+        }
+      }
+
       setProfileData({
-        first_name: user.first_name || "",
-        last_name: user.last_name || "",
+        first_name: firstName,
+        last_name: lastName,
         email: user.email || "",
         username: user.username || "",
         bio: user.bio || "",
@@ -48,8 +67,31 @@ export function ProfileSettings({ onBack }: ProfileSettingsProps) {
       if (user.profile_image_url) {
         setImagePreview(user.profile_image_url);
       }
+
+      // If we parsed the full_name, update the backend with the parsed names
+      if (needsBackendUpdate) {
+        updateBackendWithParsedNames(firstName, lastName);
+      }
     }
   }, [user]);
+
+  // Helper function to update backend with parsed names
+  const updateBackendWithParsedNames = async (
+    firstName: string,
+    lastName: string
+  ) => {
+    try {
+      await apiService.updateProfile({
+        first_name: firstName,
+        last_name: lastName,
+      });
+      // Refresh user data to get the updated information
+      await refreshUser();
+    } catch (error) {
+      console.error("Failed to update backend with parsed names:", error);
+      // Don't show error to user as this is a background operation
+    }
+  };
 
   const handleImageUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -227,7 +269,7 @@ export function ProfileSettings({ onBack }: ProfileSettingsProps) {
                       onClick={handleRemoveImage}
                       className="text-sm text-blue-600 hover:text-blue-800"
                     >
-                      remove
+                      Remove
                     </button>
                   </div>
                 </div>

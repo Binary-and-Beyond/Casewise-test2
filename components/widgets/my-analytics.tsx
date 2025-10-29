@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from "react";
 import { apiService } from "@/lib/api";
+import { ArrowLeftIcon } from "lucide-react";
 
 interface UserAnalytics {
   name: string;
@@ -15,11 +16,50 @@ interface UserAnalytics {
   lastActiveDate: string;
 }
 
-export function MyAnalytics() {
+interface MyAnalyticsProps {
+  onBackToHome?: () => void;
+  generatedCases?: Array<{
+    title: string;
+    difficulty: string;
+    description: string;
+    key_points: string[];
+  }>;
+}
+
+export function MyAnalytics({
+  onBackToHome,
+  generatedCases,
+}: MyAnalyticsProps) {
   const [analytics, setAnalytics] = useState<UserAnalytics | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState("");
   const [lastFetch, setLastFetch] = useState<number>(0);
+
+  // Helper function to calculate most common difficulty type from user's case history
+  const getMostCommonDifficultyType = (): string => {
+    if (!generatedCases || generatedCases.length === 0) return "Easy";
+
+    // Count difficulty occurrences
+    const difficultyCount: { [key: string]: number } = {};
+    generatedCases.forEach((case_) => {
+      const difficulty = case_.difficulty?.toLowerCase() || "easy";
+      difficultyCount[difficulty] = (difficultyCount[difficulty] || 0) + 1;
+    });
+
+    // Find the most common difficulty
+    let mostCommon = "easy";
+    let maxCount = 0;
+
+    Object.entries(difficultyCount).forEach(([difficulty, count]) => {
+      if (count > maxCount) {
+        maxCount = count;
+        mostCommon = difficulty;
+      }
+    });
+
+    // Capitalize first letter
+    return mostCommon.charAt(0).toUpperCase() + mostCommon.slice(1);
+  };
 
   const refreshAnalytics = async () => {
     try {
@@ -99,11 +139,22 @@ export function MyAnalytics() {
 
   return (
     <div className="flex-1 p-8">
-      <div className="mb-6">
-        <h1 className="text-2xl font-semibold text-gray-900">My Analytics</h1>
-        <p className="text-gray-600 mt-2">
-          View your learning progress and statistics
-        </p>
+      <div className="mb-6 flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-semibold text-gray-900">My Analytics</h1>
+          <p className="text-gray-600 mt-2">
+            View your learning progress and statistics
+          </p>
+        </div>
+        {onBackToHome && (
+          <button
+            onClick={onBackToHome}
+            className="px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 transition-colors hover:text-blue-600 cursor-pointer flex items-center gap-2"
+          >
+            <ArrowLeftIcon className="w-4 h-4" />
+            Back to Home
+          </button>
+        )}
       </div>
 
       {/* Analytics Table */}
@@ -153,14 +204,14 @@ export function MyAnalytics() {
                   <td className="px-6 py-4 text-sm text-gray-600">
                     <span
                       className={`inline-flex px-2 py-1 text-xs font-medium rounded-full ${
-                        analytics.mostQuestionsType === "Easy"
+                        getMostCommonDifficultyType() === "Easy"
                           ? "bg-green-100 text-green-800"
-                          : analytics.mostQuestionsType === "Medium"
+                          : getMostCommonDifficultyType() === "Moderate"
                           ? "bg-yellow-100 text-yellow-800"
                           : "bg-red-100 text-red-800"
                       }`}
                     >
-                      {analytics.mostQuestionsType}
+                      {getMostCommonDifficultyType()}
                     </span>
                   </td>
                   <td className="px-6 py-4 text-sm text-gray-600">

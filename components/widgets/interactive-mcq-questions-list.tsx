@@ -21,7 +21,8 @@ interface InteractiveMCQQuestionsListProps {
   onToggleQuestion: (index: number) => void;
   onAllQuestionsCompleted?: (
     correctAnswers: number,
-    totalQuestions: number
+    totalQuestions: number,
+    totalAttempts: number
   ) => void;
   onQuestionAttempted?: () => void;
 }
@@ -37,6 +38,7 @@ export function InteractiveMCQQuestionsList({
     new Set()
   );
   const [correctAnswers, setCorrectAnswers] = useState<Set<string>>(new Set());
+  const [totalAttempts, setTotalAttempts] = useState<number>(0);
 
   const handleQuestionCompleted = (questionId: string, isCorrect: boolean) => {
     console.log(`✅ Question ${questionId} completed. Correct: ${isCorrect}`);
@@ -45,6 +47,11 @@ export function InteractiveMCQQuestionsList({
     if (isCorrect) {
       setCorrectAnswers((prev) => new Set([...prev, questionId]));
     }
+  };
+
+  const handleQuestionAttempted = () => {
+    setTotalAttempts((prev) => prev + 1);
+    onQuestionAttempted?.();
   };
 
   useEffect(() => {
@@ -56,7 +63,14 @@ export function InteractiveMCQQuestionsList({
     // Check if all questions are completed
     if (completedQuestions.size === questions.length && questions.length > 0) {
       console.log("🎉 All questions completed! Triggering completion callback");
-      onAllQuestionsCompleted?.(correctAnswers.size, questions.length);
+      console.log(
+        `📊 Final Stats - Correct: ${correctAnswers.size}, Total: ${questions.length}, Attempts: ${totalAttempts}`
+      );
+      onAllQuestionsCompleted?.(
+        correctAnswers.size,
+        questions.length,
+        totalAttempts
+      );
     }
   }, [
     completedQuestions,
@@ -75,7 +89,7 @@ export function InteractiveMCQQuestionsList({
           isExpanded={expandedQuestions.includes(index)}
           onToggle={() => onToggleQuestion(index)}
           onQuestionCompleted={handleQuestionCompleted}
-          onQuestionAttempted={onQuestionAttempted}
+          onQuestionAttempted={handleQuestionAttempted}
         />
       ))}
     </div>

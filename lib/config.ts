@@ -18,11 +18,10 @@ export const config = {
     return getGoogleClientId();
   },
   get API_BASE_URL() {
-    // Use deployed backend as primary, localhost as fallback
-    return (
-      process.env.NEXT_PUBLIC_API_BASE_URL ||
-      "https://casewise-backend.onrender.com"
-    );
+    // Force localhost for development
+    const url = "http://localhost:8000";
+    console.log("🔧 Config: API_BASE_URL set to:", url);
+    return url;
   },
   get FALLBACK_API_BASE_URL() {
     return "http://localhost:8000";

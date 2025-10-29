@@ -20,17 +20,33 @@ interface User {
 }
 
 interface UserManagementProps {
-  onBack: () => void;
+  onSave?: (changes: UserChanges) => void;
+  onBackToAnalytics?: () => void;
 }
 
-export function UserManagement({ onBack }: UserManagementProps) {
+interface UserChanges {
+  statusChanges: Array<{
+    userId: string;
+    oldStatus: string;
+    newStatus: string;
+  }>;
+  roleChanges: Array<{ userId: string; oldRole: string; newRole: string }>;
+}
+
+export function UserManagement({
+  onSave,
+  onBackToAnalytics,
+}: UserManagementProps) {
   const [users, setUsers] = useState<User[]>([]);
+  const [originalUsers, setOriginalUsers] = useState<User[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
   const [filterRole, setFilterRole] = useState<"all" | "user" | "admin">("all");
   const [filterStatus, setFilterStatus] = useState<
     "all" | "active" | "inactive" | "suspended"
   >("all");
+  const [hasChanges, setHasChanges] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
 
   // Fetch real user data from API
   useEffect(() => {
@@ -39,10 +55,13 @@ export function UserManagement({ onBack }: UserManagementProps) {
         setIsLoading(true);
         const response = await apiService.getAllUsers();
         setUsers(response.users);
+        setOriginalUsers(response.users); // Store original data for comparison
+        setHasChanges(false);
       } catch (error) {
         console.error("Failed to fetch users:", error);
         // Fallback to empty array if API fails
         setUsers([]);
+        setOriginalUsers([]);
       } finally {
         setIsLoading(false);
       }
@@ -72,6 +91,7 @@ export function UserManagement({ onBack }: UserManagementProps) {
         user.id === userId ? { ...user, status: newStatus } : user
       )
     );
+    setHasChanges(true);
   };
 
   const handleRoleChange = (userId: string, newRole: "user" | "admin") => {
@@ -80,6 +100,78 @@ export function UserManagement({ onBack }: UserManagementProps) {
         user.id === userId ? { ...user, role: newRole } : user
       )
     );
+    setHasChanges(true);
+  };
+
+  const handleSave = async () => {
+    if (!hasChanges) return;
+
+    setIsSaving(true);
+    try {
+      // Calculate changes
+      const statusChanges: Array<{
+        userId: string;
+        oldStatus: string;
+        newStatus: string;
+      }> = [];
+      const roleChanges: Array<{
+        userId: string;
+        oldRole: string;
+        newRole: string;
+      }> = [];
+
+      users.forEach((user) => {
+        const originalUser = originalUsers.find((u) => u.id === user.id);
+        if (originalUser) {
+          if (originalUser.status !== user.status) {
+            statusChanges.push({
+              userId: user.id,
+              oldStatus: originalUser.status,
+              newStatus: user.status,
+            });
+          }
+          if (originalUser.role !== user.role) {
+            roleChanges.push({
+              userId: user.id,
+              oldRole: originalUser.role,
+              newRole: user.role,
+            });
+          }
+        }
+      });
+
+      const changes: UserChanges = { statusChanges, roleChanges };
+
+      // Call the save callback
+      if (onSave) {
+        await onSave(changes);
+      }
+
+      // Refresh user data from API to get the latest state
+      try {
+        const response = await apiService.getAllUsers();
+        setUsers(response.users);
+        setOriginalUsers(response.users);
+        setHasChanges(false);
+        console.log("✅ User data refreshed after save");
+      } catch (error) {
+        console.error("❌ Failed to refresh user data:", error);
+        // Still update local state even if refresh fails
+        setOriginalUsers([...users]);
+        setHasChanges(false);
+      }
+
+      console.log("✅ User changes saved successfully:", changes);
+    } catch (error) {
+      console.error("❌ Failed to save changes:", error);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleCancel = () => {
+    setUsers([...originalUsers]);
+    setHasChanges(false);
   };
 
   const getStatusColor = (status: string) => {
@@ -116,16 +208,49 @@ export function UserManagement({ onBack }: UserManagementProps) {
 
   return (
     <div className="space-y-8 p-6">
-      <div className="flex items-center justify-between">
+      <div className="flex justify-between items-start">
         <div>
           <h2 className="text-3xl font-bold text-gray-900">User Management</h2>
           <p className="text-gray-600 mt-2">
             Manage user accounts, roles, and permissions
           </p>
         </div>
-        <Button onClick={onBack} variant="outline" className="px-6 py-2">
-          Back to Analytics
-        </Button>
+        <div className="flex space-x-3">
+          {onBackToAnalytics && (
+            <Button
+              onClick={onBackToAnalytics}
+              variant="outline"
+              className="px-4 py-2"
+            >
+              ← Back to Analytics
+            </Button>
+          )}
+          {hasChanges && (
+            <>
+              <Button
+                onClick={handleCancel}
+                variant="outline"
+                className="px-4 py-2 text-gray-600 border-gray-300 hover:bg-gray-50"
+              >
+                Cancel
+              </Button>
+              <Button
+                onClick={handleSave}
+                disabled={isSaving}
+                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white"
+              >
+                {isSaving ? (
+                  <div className="flex items-center">
+                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
+                    Saving...
+                  </div>
+                ) : (
+                  "Save Changes"
+                )}
+              </Button>
+            </>
+          )}
+        </div>
       </div>
 
       {/* Filters */}
@@ -312,8 +437,16 @@ export function UserManagement({ onBack }: UserManagementProps) {
         </div>
       </div>
 
-      <div className="text-sm text-gray-600">
-        Showing {filteredUsers.length} of {users.length} users
+      <div className="flex justify-between items-center">
+        <div className="text-sm text-gray-600">
+          Showing {filteredUsers.length} of {users.length} users
+        </div>
+        {hasChanges && (
+          <div className="flex items-center text-orange-600 text-sm">
+            <div className="w-2 h-2 bg-orange-500 rounded-full mr-2"></div>
+            You have unsaved changes
+          </div>
+        )}
       </div>
     </div>
   );

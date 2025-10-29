@@ -10,7 +10,7 @@ import { Dashboard } from "@/components/dashboard";
 import { useAuth } from "@/lib/auth-context";
 
 function AuthPageContent() {
-  const { isAuthenticated, isLoading } = useAuth();
+  const { isAuthenticated, isLoading, isAdmin } = useAuth();
   const searchParams = useSearchParams();
   const router = useRouter();
   const [currentView, setCurrentView] = useState<
@@ -31,6 +31,26 @@ function AuthPageContent() {
     }
   }, [searchParams]);
 
+  // Handle redirection when user is authenticated
+  // This MUST be before any conditional returns to follow React Hooks rules
+  useEffect(() => {
+    if (!isAuthenticated) {
+      return; // No cleanup needed if not authenticated
+    }
+
+    const redirectTimer = setTimeout(() => {
+      if (isAdmin) {
+        console.log("🔄 Redirecting admin user to analytics");
+        router.push("/dashboard/analytics");
+      } else {
+        console.log("🔄 Redirecting regular user to dashboard");
+        router.push("/dashboard");
+      }
+    }, 100); // Small delay to ensure user data is loaded
+
+    return () => clearTimeout(redirectTimer);
+  }, [isAuthenticated, isAdmin, router]);
+
   // Show loading spinner while checking authentication
   if (isLoading) {
     return (
@@ -43,10 +63,16 @@ function AuthPageContent() {
     );
   }
 
-  // If user is authenticated, redirect to dashboard
+  // If user is authenticated, show loading while redirecting
   if (isAuthenticated) {
-    router.push("/dashboard");
-    return null;
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
+          <p className="mt-4 text-gray-600">Redirecting...</p>
+        </div>
+      </div>
+    );
   }
 
   // Show authentication forms for non-authenticated users

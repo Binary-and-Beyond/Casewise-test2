@@ -87,7 +87,58 @@ export function SignUpForm({ onLoginClick, onSignUpSuccess }: SignUpFormProps) {
               width: "100%",
               text: "signup_with",
               shape: "rectangular",
+              logo_alignment: "left",
             });
+
+            // Force the button to maintain full width, center alignment, and prevent auto-detection
+            setTimeout(() => {
+              const googleButton = buttonElement.querySelector(
+                'div[role="button"]'
+              ) as HTMLElement;
+              if (googleButton) {
+                // Force full width and center alignment
+                googleButton.style.width = "100%";
+                googleButton.style.minWidth = "100%";
+                googleButton.style.margin = "0 auto";
+                googleButton.style.display = "flex";
+                googleButton.style.justifyContent = "center";
+                googleButton.style.alignItems = "center";
+
+                // Set up observer to prevent text changes
+                const observer = new MutationObserver((mutations) => {
+                  mutations.forEach((mutation) => {
+                    if (
+                      mutation.type === "childList" ||
+                      mutation.type === "characterData"
+                    ) {
+                      const textElement = googleButton.querySelector("span");
+                      if (
+                        textElement &&
+                        textElement.textContent &&
+                        !textElement.textContent.includes("Sign up with Google")
+                      ) {
+                        textElement.textContent = "Sign up with Google";
+                      }
+                    }
+                  });
+                });
+
+                observer.observe(googleButton, {
+                  childList: true,
+                  subtree: true,
+                  characterData: true,
+                });
+
+                // Initial text check
+                const textElement = googleButton.querySelector("span");
+                if (
+                  textElement &&
+                  textElement.textContent !== "Sign up with Google"
+                ) {
+                  textElement.textContent = "Sign up with Google";
+                }
+              }
+            }, 100);
           }
         } catch (error) {
           console.error("Error initializing Google Auth:", error);
@@ -344,18 +395,22 @@ export function SignUpForm({ onLoginClick, onSignUpSuccess }: SignUpFormProps) {
       </form>
 
       <div className="mt-6 space-y-3">
-        <div className="flex justify-center">
-          <div className="relative w-full max-w-xs">
-            <div id="google-signup-button" className="w-full h-12"></div>
-            {isLoading && (
-              <div className="absolute inset-0 flex items-center justify-center bg-white bg-opacity-75 rounded border">
-                <span className="text-sm text-gray-600">Signing up...</span>
-              </div>
-            )}
-          </div>
+        <div className="relative w-full flex justify-center items-center">
+          <div
+            id="google-signup-button"
+            className="w-full h-12 flex justify-center items-center"
+            style={{
+              minWidth: "100%",
+              width: "100%",
+            }}
+          ></div>
+          {isLoading && (
+            <div className="absolute inset-0 flex items-center justify-center bg-white bg-opacity-75 rounded border">
+              <span className="text-sm text-gray-600">Signing up...</span>
+            </div>
+          )}
         </div>
       </div>
-
       <div className="mt-6 text-center">
         <button
           type="button"

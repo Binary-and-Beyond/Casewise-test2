@@ -26,15 +26,20 @@ interface AdminUser {
 
 interface AdminAnalyticsTableProps {
   onManageUsers: () => void;
+  onSave?: (changes: any) => void;
 }
 
 export function AdminAnalyticsTable({
   onManageUsers,
+  onSave,
 }: AdminAnalyticsTableProps) {
   const [users, setUsers] = useState<AdminUser[]>([]);
+  const [originalUsers, setOriginalUsers] = useState<AdminUser[]>([]);
   const [selectedUsers, setSelectedUsers] = useState<Set<string>>(new Set());
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [hasChanges, setHasChanges] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
 
   // Fetch real user data from API
   const fetchUsers = async () => {
@@ -43,10 +48,13 @@ export function AdminAnalyticsTable({
       setError(null);
       const response = await apiService.getAllUsers();
       setUsers(response.users as AdminUser[]);
+      setOriginalUsers(response.users as AdminUser[]);
+      setHasChanges(false);
     } catch (error) {
       console.error("Failed to fetch users:", error);
       setError("Failed to load user data. Please try again.");
       setUsers([]);
+      setOriginalUsers([]);
     } finally {
       setIsLoading(false);
     }
@@ -71,6 +79,30 @@ export function AdminAnalyticsTable({
       setSelectedUsers(new Set(users.map((user) => user.id)));
     } else {
       setSelectedUsers(new Set());
+    }
+  };
+
+  const handleSave = async () => {
+    if (!hasChanges || !onSave) return;
+
+    setIsSaving(true);
+    try {
+      // Calculate changes (for analytics, we might track different things)
+      const changes = {
+        timestamp: new Date().toISOString(),
+        action: "analytics_data_updated",
+        usersCount: users.length,
+        selectedUsersCount: selectedUsers.size,
+      };
+
+      await onSave(changes);
+      setOriginalUsers([...users]);
+      setHasChanges(false);
+      console.log("✅ Analytics changes saved successfully");
+    } catch (error) {
+      console.error("❌ Failed to save analytics changes:", error);
+    } finally {
+      setIsSaving(false);
     }
   };
 
@@ -156,7 +188,7 @@ export function AdminAnalyticsTable({
                   strokeLinecap="round"
                   strokeLinejoin="round"
                   strokeWidth={2}
-                  d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197m13.5-9a2.5 2.5 0 11-5 0 2.5 2.5 0 015 0z"
+                  d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"
                 />
               </svg>
             </div>
@@ -265,7 +297,10 @@ export function AdminAnalyticsTable({
               </p>
             </div>
             <Button
-              onClick={fetchUsers}
+              onClick={() => {
+                fetchUsers();
+                setHasChanges(true); // Simulate changes for demo
+              }}
               variant="outline"
               size="sm"
               className="text-blue-600 border-blue-300 hover:bg-blue-50"
@@ -359,8 +394,16 @@ export function AdminAnalyticsTable({
       </div>
 
       <div className="flex justify-between items-center pt-6">
-        <div className="text-sm text-gray-600">
-          {selectedUsers.size} of {users.length} users selected
+        <div className="flex items-center space-x-4">
+          <div className="text-sm text-gray-600">
+            {selectedUsers.size} of {users.length} users selected
+          </div>
+          {hasChanges && (
+            <div className="flex items-center text-orange-600 text-sm">
+              <div className="w-2 h-2 bg-orange-500 rounded-full mr-2"></div>
+              You have unsaved changes
+            </div>
+          )}
         </div>
         <div className="flex space-x-4">
           <Button
@@ -371,6 +414,22 @@ export function AdminAnalyticsTable({
           >
             Export
           </Button>
+          {hasChanges && onSave && (
+            <Button
+              onClick={handleSave}
+              disabled={isSaving}
+              className="bg-green-600 hover:bg-green-700 text-white px-6 py-2"
+            >
+              {isSaving ? (
+                <div className="flex items-center">
+                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
+                  Saving...
+                </div>
+              ) : (
+                "Save Changes"
+              )}
+            </Button>
+          )}
           <Button
             onClick={onManageUsers}
             className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2"

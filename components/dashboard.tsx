@@ -36,6 +36,7 @@ import {
   ChatMessage,
   MCQQuestion,
 } from "@/lib/api";
+import { ArrowLeftIcon } from "lucide-react";
 
 interface DashboardProps {
   // No props needed - authentication is handled by context
@@ -265,23 +266,14 @@ export function Dashboard({}: DashboardProps) {
   >(() => {
     if (typeof window !== "undefined") {
       try {
-        const cachedMCQs = localStorage.getItem("mcq_questions");
-        if (cachedMCQs) {
-          const parsedMCQs = JSON.parse(cachedMCQs);
-          console.log(
-            "🚀 Initializing MCQ questions from localStorage:",
-            Object.keys(parsedMCQs).length,
-            "cases",
-            "Details:",
-            Object.keys(parsedMCQs).map((caseTitle) => ({
-              case: caseTitle,
-              questions: parsedMCQs[caseTitle].length,
-              firstQuestion:
-                parsedMCQs[caseTitle][0]?.question?.substring(0, 50) + "...",
-            }))
-          );
-          return parsedMCQs;
-        }
+        // Force clear all MCQ cache to ensure difficulty consistency
+        console.log(
+          "🔄 Clearing all MCQ cache to ensure difficulty consistency"
+        );
+        localStorage.removeItem("mcq_questions");
+        localStorage.setItem("mcq_cache_version", "2.0");
+        localStorage.setItem("mcq_regenerate_needed", "true");
+        return {};
       } catch (e) {
         console.log("❌ Failed to parse cached MCQ questions on init:", e);
       }
@@ -355,6 +347,21 @@ export function Dashboard({}: DashboardProps) {
   useEffect(() => {
     if (typeof window !== "undefined") {
       localStorage.removeItem("current_view");
+    }
+  }, []);
+
+  // Check if MCQ regeneration is needed due to cache version update
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const regenerateNeeded = localStorage.getItem("mcq_regenerate_needed");
+      if (regenerateNeeded === "true") {
+        console.log("🔄 MCQ regeneration needed due to cache version update");
+        localStorage.removeItem("mcq_regenerate_needed");
+        // Clear existing MCQ questions to force regeneration
+        setMCQQuestions({});
+        // Clear the auto-attempted ref to allow regeneration
+        mcqAutoAttemptedRef.current.clear();
+      }
     }
   }, []);
 
@@ -2079,27 +2086,65 @@ export function Dashboard({}: DashboardProps) {
         "🤖 Generating MCQs with AI... This may take 10-30 seconds."
       );
 
+      // Get the difficulty of the selected case
+      const caseDifficulty = getCaseDifficulty(selectedCase);
+      console.log(
+        "🎯 Generating MCQs for case:",
+        selectedCase,
+        "with difficulty:",
+        caseDifficulty
+      );
+
       // Use the new MCQ API endpoint
       const response = await apiService.generateMCQs(
         currentDocument.id,
         selectedCase, // Pass the selected case title
         5, // Reduced from 5 to 3 for faster generation
-        true // Include hints
+        true, // Include hints
+        caseDifficulty // Pass the case difficulty
       );
 
       // Update the MCQ questions state for the selected case
       if (selectedCase) {
+        console.log(
+          "📊 Received MCQ response with difficulties:",
+          response.questions.map((q) => q.difficulty)
+        );
+
+        // BULLETPROOF: Force all questions to have the case difficulty
+        const correctedQuestions = response.questions.map((q) => ({
+          ...q,
+          difficulty: caseDifficulty, // Force to case difficulty regardless of what AI returned
+        }));
+
+        // Validate that all questions now have the same difficulty
+        const difficulties = correctedQuestions.map((q) => q.difficulty);
+        const uniqueDifficulties = [...new Set(difficulties)];
+        if (uniqueDifficulties.length > 1) {
+          console.error(
+            "❌ ERROR: Still have mixed difficulties after correction:",
+            uniqueDifficulties
+          );
+        } else {
+          console.log(
+            "✅ All questions corrected to case difficulty:",
+            uniqueDifficulties[0]
+          );
+        }
+
         setMCQQuestions((prev) => {
           const updated = {
             ...prev,
-            [selectedCase]: response.questions,
+            [selectedCase]: correctedQuestions, // Use corrected questions with forced difficulty
           };
           console.log("🔄 MCQ State Update:", {
             case: selectedCase,
-            questionsCount: response.questions.length,
+            questionsCount: correctedQuestions.length,
+            originalDifficulties: response.questions.map((q) => q.difficulty),
+            correctedDifficulties: correctedQuestions.map((q) => q.difficulty),
             totalCases: Object.keys(updated).length,
             allCases: Object.keys(updated),
-            questions: response.questions,
+            questions: correctedQuestions,
           });
           return updated;
         });
@@ -2182,10 +2227,13 @@ export function Dashboard({}: DashboardProps) {
       }
 
       console.log("📤 Calling API to generate MCQs for case:", selectedCase);
+      const caseDifficulty = getCaseDifficulty(selectedCase);
       const mcqResponse = await apiService.generateMCQs(
         currentDocument.id,
         selectedCase, // This is the case title, not ID
-        5 // Generate 4 MCQs per case
+        5, // Generate 4 MCQs per case
+        true, // Include hints
+        caseDifficulty // Pass the case difficulty
       );
 
       console.log("📥 Received MCQ response:", mcqResponse);
@@ -2580,6 +2628,12 @@ export function Dashboard({}: DashboardProps) {
       | "notifications"
       | "chatbot-flow"
   ) => {
+    // Clear active chat when switching to non-chat views
+    if (view !== "chatbot-flow") {
+      setActiveChat("");
+      localStorage.removeItem("active_chat");
+    }
+
     // Check if we're currently in MCQ view and have unsaved progress
     if (
       (currentView === "explore-cases" || currentView === "generate-mcqs") &&
@@ -2682,12 +2736,43 @@ export function Dashboard({}: DashboardProps) {
 
   // MCQ completion handlers
   const handleMCQCompletion = useCallback(
-    (correctAnswers: number, totalQuestions: number) => {
+    async (
+      correctAnswers: number,
+      totalQuestions: number,
+      totalAttempts: number
+    ) => {
       setCompletionStats({ correct: correctAnswers, total: totalQuestions });
       setShowCompletionPopup(true);
       setHasUnsavedProgress(false); // Progress is now saved/completed
+
+      // Log detailed analytics
+      console.log("📊 MCQ Completion Analytics:", {
+        correctAnswers,
+        totalQuestions,
+        totalAttempts,
+        firstAttemptAccuracy:
+          totalQuestions > 0
+            ? ((correctAnswers / totalQuestions) * 100).toFixed(1) + "%"
+            : "0%",
+        averageAttemptsPerQuestion:
+          totalQuestions > 0
+            ? (totalAttempts / totalQuestions).toFixed(1)
+            : "0",
+      });
+
+      // Update analytics in backend
+      try {
+        await apiService.updateMCQAnalytics({
+          correct_answers: correctAnswers,
+          total_questions: totalQuestions,
+          case_id: selectedCase,
+        });
+        console.log("✅ Analytics updated successfully");
+      } catch (error) {
+        console.error("❌ Failed to update analytics:", error);
+      }
     },
-    []
+    [selectedCase]
   );
 
   const handleCompletionPopupClose = () => {
@@ -2699,6 +2784,87 @@ export function Dashboard({}: DashboardProps) {
   const [adminView, setAdminView] = useState<"analytics" | "user-management">(
     "analytics"
   );
+  const [adminUsers, setAdminUsers] = useState<any[]>([]);
+  const [isSavingAdminChanges, setIsSavingAdminChanges] = useState(false);
+  const [adminSaveMessage, setAdminSaveMessage] = useState<{
+    type: "success" | "error";
+    message: string;
+  } | null>(null);
+
+  const handleAdminUserSave = async (changes: any) => {
+    setIsSavingAdminChanges(true);
+    try {
+      console.log("💾 Saving admin user changes:", changes);
+
+      // Convert changes to API format
+      const updates: Array<{
+        user_id: string;
+        role?: string;
+        status?: string;
+      }> = [];
+
+      // Add status changes
+      if (changes.statusChanges) {
+        changes.statusChanges.forEach((change: any) => {
+          updates.push({
+            user_id: change.userId,
+            status: change.newStatus,
+          });
+        });
+      }
+
+      // Add role changes
+      if (changes.roleChanges) {
+        changes.roleChanges.forEach((change: any) => {
+          updates.push({
+            user_id: change.userId,
+            role: change.newRole,
+          });
+        });
+      }
+
+      // Call the API to save changes
+      console.log("🌐 Sending API request with updates:", updates);
+      const response = await apiService.updateUsers({ updates });
+
+      console.log("✅ Admin user changes saved successfully:", response);
+      console.log("📊 Response details:", {
+        message: response.message,
+        updated_users: response.updated_users,
+        errors: response.errors,
+        total_processed: response.total_processed,
+      });
+
+      // Show success message
+      setAdminSaveMessage({
+        type: "success",
+        message: `Successfully updated ${
+          response.updated_users?.length || 0
+        } users`,
+      });
+
+      // Clear message after 3 seconds
+      setTimeout(() => setAdminSaveMessage(null), 3000);
+
+      // Refresh the user data to reflect changes
+      // This will be handled by the individual components
+    } catch (error) {
+      console.error("❌ Failed to save admin user changes:", error);
+
+      // Show error message
+      setAdminSaveMessage({
+        type: "error",
+        message: `Failed to save changes: ${
+          error instanceof Error ? error.message : "Unknown error"
+        }`,
+      });
+
+      // Clear message after 5 seconds
+      setTimeout(() => setAdminSaveMessage(null), 5000);
+    } finally {
+      setIsSavingAdminChanges(false);
+    }
+  };
 
   const handleCompletionPopupContinue = async () => {
     // Prevent multiple clicks
@@ -2778,6 +2944,53 @@ export function Dashboard({}: DashboardProps) {
     setHasUnsavedProgress(true);
   };
 
+  // Helper function to get difficulty for selected case
+  const getCaseDifficulty = (caseTitle: string): string => {
+    const caseData = generatedCases.find((c) => c.title === caseTitle);
+    return caseData?.difficulty || "Moderate";
+  };
+
+  // Helper function to get difficulty color
+  const getDifficultyColor = (difficulty: string) => {
+    const normalized = difficulty.toLowerCase();
+    switch (normalized) {
+      case "easy":
+        return "bg-green-100 text-green-800";
+      case "moderate":
+        return "bg-yellow-100 text-yellow-800";
+      case "hard":
+        return "bg-red-100 text-red-800";
+      default:
+        return "bg-yellow-100 text-yellow-800";
+    }
+  };
+
+  // Helper function to calculate most common difficulty type from user's case history
+  const getMostCommonDifficultyType = (): string => {
+    if (generatedCases.length === 0) return "Easy";
+
+    // Count difficulty occurrences
+    const difficultyCount: { [key: string]: number } = {};
+    generatedCases.forEach((case_) => {
+      const difficulty = case_.difficulty?.toLowerCase() || "easy";
+      difficultyCount[difficulty] = (difficultyCount[difficulty] || 0) + 1;
+    });
+
+    // Find the most common difficulty
+    let mostCommon = "easy";
+    let maxCount = 0;
+
+    Object.entries(difficultyCount).forEach(([difficulty, count]) => {
+      if (count > maxCount) {
+        maxCount = count;
+        mostCommon = difficulty;
+      }
+    });
+
+    // Capitalize first letter
+    return mostCommon.charAt(0).toUpperCase() + mostCommon.slice(1);
+  };
+
   const renderMyAnalytics = () => {
     if (isAdmin) {
       return (
@@ -2792,6 +3005,14 @@ export function Dashboard({}: DashboardProps) {
               </p>
             </div>
             <div className="flex space-x-3">
+              <Button
+                onClick={() => navigateToView("main")}
+                variant="outline"
+                className="px-6 py-2 border-gray-300 text-gray-700 hover:bg-gray-50 hover:text-blue-600 cursor-pointer flex items-center gap-2"
+              >
+                <ArrowLeftIcon className="w-4 h-4" />
+                Back to Home
+              </Button>
               <Button
                 onClick={() => setAdminView("analytics")}
                 variant={adminView === "analytics" ? "default" : "outline"}
@@ -2817,19 +3038,46 @@ export function Dashboard({}: DashboardProps) {
             </div>
           </div>
 
+          {/* Admin Save Message */}
+          {adminSaveMessage && (
+            <div
+              className={`fixed top-4 right-4 z-50 p-4 rounded-lg shadow-lg ${
+                adminSaveMessage.type === "success"
+                  ? "bg-green-100 border border-green-400 text-green-700"
+                  : "bg-red-100 border border-red-400 text-red-700"
+              }`}
+            >
+              <div className="flex items-center">
+                <div className="mr-2">
+                  {adminSaveMessage.type === "success" ? "✅" : "❌"}
+                </div>
+                <div>{adminSaveMessage.message}</div>
+              </div>
+            </div>
+          )}
+
           {adminView === "analytics" && (
             <AdminAnalyticsTable
               onManageUsers={() => setAdminView("user-management")}
+              onSave={handleAdminUserSave}
             />
           )}
 
           {adminView === "user-management" && (
-            <UserManagement onBack={() => setAdminView("analytics")} />
+            <UserManagement
+              onSave={handleAdminUserSave}
+              onBackToAnalytics={() => setAdminView("analytics")}
+            />
           )}
         </div>
       );
     }
-    return <MyAnalytics />;
+    return (
+      <MyAnalytics
+        onBackToHome={() => navigateToView("main")}
+        generatedCases={generatedCases}
+      />
+    );
   };
 
   const renderMainDashboard = () => {
@@ -3003,10 +3251,13 @@ export function Dashboard({}: DashboardProps) {
                       console.log(
                         `📄 Using document: ${currentDocument.id} for MCQ generation`
                       );
+                      const caseDifficulty = getCaseDifficulty(title);
                       const mcqResponse = await apiService.generateMCQs(
                         currentDocument.id,
                         title,
-                        4 // Generate 4 MCQs per case
+                        4, // Generate 4 MCQs per case
+                        true, // Include hints
+                        caseDifficulty // Pass the case difficulty
                       );
 
                       console.log(`📊 MCQ response for ${title}:`, mcqResponse);
@@ -3092,8 +3343,12 @@ export function Dashboard({}: DashboardProps) {
                 {selectedCase}
               </h1>
               <div className="flex items-center space-x-1">
-                <span className="bg-yellow-100 text-yellow-800 px-2 py-1 rounded text-xs font-medium">
-                  Moderate
+                <span
+                  className={`px-2 py-1 rounded text-xs font-medium ${getDifficultyColor(
+                    getCaseDifficulty(selectedCase)
+                  )}`}
+                >
+                  {getCaseDifficulty(selectedCase)}
                 </span>
               </div>
             </div>
@@ -3138,8 +3393,12 @@ export function Dashboard({}: DashboardProps) {
               <h1 className="text-2xl font-semibold text-gray-900 mr-3">
                 {selectedCase || "MCQ Questions"}
               </h1>
-              <span className="bg-yellow-100 text-yellow-800 px-2 py-1 rounded text-xs font-medium">
-                Moderate
+              <span
+                className={`px-2 py-1 rounded text-xs font-medium ${getDifficultyColor(
+                  getCaseDifficulty(selectedCase)
+                )}`}
+              >
+                {getCaseDifficulty(selectedCase)}
               </span>
             </div>
             <div className="text-right">
@@ -3274,8 +3533,12 @@ export function Dashboard({}: DashboardProps) {
               <h1 className="text-2xl font-semibold text-gray-900 mr-3">
                 {selectedCase || "Chest Pain in a Middle-Aged Man"}
               </h1>
-              <span className="bg-yellow-100 text-yellow-800 px-2 py-1 rounded text-xs font-medium">
-                Moderate
+              <span
+                className={`px-2 py-1 rounded text-xs font-medium ${getDifficultyColor(
+                  getCaseDifficulty(selectedCase)
+                )}`}
+              >
+                {getCaseDifficulty(selectedCase)}
               </span>
             </div>
             <div className="text-right">
@@ -3360,8 +3623,12 @@ export function Dashboard({}: DashboardProps) {
               <h1 className="text-2xl font-semibold text-gray-900 mr-3">
                 {selectedCase || "Key Concepts"}
               </h1>
-              <span className="bg-yellow-100 text-yellow-800 px-2 py-1 rounded text-xs font-medium">
-                Moderate
+              <span
+                className={`px-2 py-1 rounded text-xs font-medium ${getDifficultyColor(
+                  getCaseDifficulty(selectedCase)
+                )}`}
+              >
+                {getCaseDifficulty(selectedCase)}
               </span>
             </div>
             <div className="text-right">
@@ -3408,19 +3675,23 @@ export function Dashboard({}: DashboardProps) {
               </div>
             </div>
           ) : (
-            <ConceptsList
-              concepts={concepts}
-              onConceptSelect={handleConceptSelect}
-            />
+            <>
+              <ConceptsList
+                concepts={concepts}
+                onConceptSelect={handleConceptSelect}
+              />
+              {/* Show chat input only after concepts are generated */}
+              {Array.isArray(concepts) && concepts.length > 0 && (
+                <div className="mt-auto">
+                  <ChatInput
+                    message={chatMessage}
+                    onMessageChange={setChatMessage}
+                    onSend={() => console.log("Send message:", chatMessage)}
+                  />
+                </div>
+              )}
+            </>
           )}
-
-          <div className="mt-auto">
-            <ChatInput
-              message={chatMessage}
-              onMessageChange={setChatMessage}
-              onSend={() => console.log("Send message:", chatMessage)}
-            />
-          </div>
         </div>
       </div>
     );
@@ -3453,8 +3724,12 @@ export function Dashboard({}: DashboardProps) {
               <h1 className="text-2xl font-semibold text-gray-900 mr-3">
                 {selectedCase || "Key Concepts"}
               </h1>
-              <span className="bg-yellow-100 text-yellow-800 px-2 py-1 rounded text-xs font-medium">
-                Moderate
+              <span
+                className={`px-2 py-1 rounded text-xs font-medium ${getDifficultyColor(
+                  getCaseDifficulty(selectedCase)
+                )}`}
+              >
+                {getCaseDifficulty(selectedCase)}
               </span>
             </div>
             <div className="text-right">

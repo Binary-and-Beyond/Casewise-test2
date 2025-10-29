@@ -159,15 +159,20 @@ export function AdminLoginForm({
       </form>
 
       <div className="mt-6 space-y-3">
-        <div className="flex justify-center">
-          <div className="relative w-full max-w-xs">
-            <div id="google-signin-button" className="w-full h-12"></div>
-            {isLoading && (
-              <div className="absolute inset-0 flex items-center justify-center bg-white bg-opacity-75 rounded border">
-                <span className="text-sm text-gray-600">Signing in...</span>
-              </div>
-            )}
-          </div>
+        <div className="relative w-full">
+          <div
+            id="google-signin-button"
+            className="w-full h-12"
+            style={{
+              minWidth: "100%",
+              width: "100%",
+            }}
+          ></div>
+          {isLoading && (
+            <div className="absolute inset-0 flex items-center justify-center bg-white bg-opacity-75 rounded border">
+              <span className="text-sm text-gray-600">Signing in...</span>
+            </div>
+          )}
         </div>
       </div>
 
