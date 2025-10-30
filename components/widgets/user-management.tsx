@@ -12,7 +12,7 @@ interface User {
   username: string;
   full_name?: string;
   role: "user" | "admin";
-  status: "active" | "inactive" | "suspended";
+  status: "active" | "inactive";
   created_at: string;
   last_active: string;
   total_cases: number;
@@ -43,7 +43,7 @@ export function UserManagement({
   const [searchTerm, setSearchTerm] = useState("");
   const [filterRole, setFilterRole] = useState<"all" | "user" | "admin">("all");
   const [filterStatus, setFilterStatus] = useState<
-    "all" | "active" | "inactive" | "suspended"
+    "all" | "active" | "inactive"
   >("all");
   const [hasChanges, setHasChanges] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
@@ -84,7 +84,7 @@ export function UserManagement({
 
   const handleStatusChange = (
     userId: string,
-    newStatus: "active" | "inactive" | "suspended"
+    newStatus: "active" | "inactive"
   ) => {
     setUsers((prev) =>
       prev.map((user) =>
@@ -180,8 +180,7 @@ export function UserManagement({
         return "bg-green-100 text-green-800";
       case "inactive":
         return "bg-yellow-100 text-yellow-800";
-      case "suspended":
-        return "bg-red-100 text-red-800";
+      // only active/inactive are allowed
       default:
         return "bg-gray-100 text-gray-800";
     }
@@ -303,7 +302,7 @@ export function UserManagement({
               value={filterStatus}
               onChange={(e) =>
                 setFilterStatus(
-                  e.target.value as "all" | "active" | "inactive" | "suspended"
+                  e.target.value as "all" | "active" | "inactive"
                 )
               }
               className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
@@ -311,7 +310,6 @@ export function UserManagement({
               <option value="all">All Status</option>
               <option value="active">Active</option>
               <option value="inactive">Inactive</option>
-              <option value="suspended">Suspended</option>
             </select>
           </div>
           <div className="flex items-end">
@@ -401,17 +399,13 @@ export function UserManagement({
                         onChange={(e) =>
                           handleStatusChange(
                             user.id,
-                            e.target.value as
-                              | "active"
-                              | "inactive"
-                              | "suspended"
+                            e.target.value as "active" | "inactive"
                           )
                         }
                         className="text-xs px-2 py-1 border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
                       >
                         <option value="active">Active</option>
                         <option value="inactive">Inactive</option>
-                        <option value="suspended">Suspend</option>
                       </select>
                       {user.role !== "admin" && (
                         <select

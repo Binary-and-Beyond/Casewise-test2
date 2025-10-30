@@ -2745,20 +2745,7 @@ export function Dashboard({}: DashboardProps) {
       setShowCompletionPopup(true);
       setHasUnsavedProgress(false); // Progress is now saved/completed
 
-      // Log detailed analytics
-      console.log("📊 MCQ Completion Analytics:", {
-        correctAnswers,
-        totalQuestions,
-        totalAttempts,
-        firstAttemptAccuracy:
-          totalQuestions > 0
-            ? ((correctAnswers / totalQuestions) * 100).toFixed(1) + "%"
-            : "0%",
-        averageAttemptsPerQuestion:
-          totalQuestions > 0
-            ? (totalAttempts / totalQuestions).toFixed(1)
-            : "0",
-      });
+      // Record completion; avoid verbose console logging in production
 
       // Update analytics in backend
       try {
@@ -2766,6 +2753,7 @@ export function Dashboard({}: DashboardProps) {
           correct_answers: correctAnswers,
           total_questions: totalQuestions,
           case_id: selectedCase,
+          case_difficulty: getCaseDifficulty(selectedCase),
         });
         console.log("✅ Analytics updated successfully");
       } catch (error) {
@@ -2867,40 +2855,11 @@ export function Dashboard({}: DashboardProps) {
   };
 
   const handleCompletionPopupContinue = async () => {
-    // Prevent multiple clicks
-    if (isUpdatingAnalytics) {
-      console.log("⏳ Analytics update already in progress, ignoring click");
-      return;
-    }
-
-    console.log("🔄 Finishing completion popup (dashboard)");
-    console.log("📊 Completion stats:", completionStats);
-
-    setIsUpdatingAnalytics(true);
-
-    try {
-      // Update user analytics with MCQ completion data
-      const analyticsData = {
-        correct_answers: completionStats.correct,
-        total_questions: completionStats.total,
-        // case_id is optional and not needed for dashboard context
-      };
-
-      console.log("📤 Sending analytics data:", analyticsData);
-
-      const result = await apiService.updateMCQAnalytics(analyticsData);
-
-      console.log("✅ Analytics updated successfully:", result);
-    } catch (error) {
-      console.error("❌ Failed to update analytics:", error);
-      console.error("❌ Error details:", error);
-      // Don't block the user flow if analytics update fails
-    } finally {
-      setIsUpdatingAnalytics(false);
-    }
-
+    // Analytics already sent at completion time. Just close the popup.
+    console.log(
+      "🔄 Finishing completion popup (dashboard) — no extra analytics call"
+    );
     setShowCompletionPopup(false);
-    // Could navigate to next section or show summary
   };
 
   // Navigation warning handlers
@@ -2995,6 +2954,17 @@ export function Dashboard({}: DashboardProps) {
     if (isAdmin) {
       return (
         <div className="space-y-8 p-6">
+          {/* Back to Home above heading */}
+          <div>
+            <Button
+              onClick={() => navigateToView("main")}
+              variant="outline"
+              className="px-6 py-2 border-gray-300 text-gray-700 hover:bg-gray-50 hover:text-blue-600 cursor-pointer flex items-center gap-2"
+            >
+              <ArrowLeftIcon className="w-4 h-4" />
+              Back to Home
+            </Button>
+          </div>
           <div className="flex items-center justify-between">
             <div>
               <h1 className="text-3xl font-bold text-gray-900">
@@ -3005,14 +2975,6 @@ export function Dashboard({}: DashboardProps) {
               </p>
             </div>
             <div className="flex space-x-3">
-              <Button
-                onClick={() => navigateToView("main")}
-                variant="outline"
-                className="px-6 py-2 border-gray-300 text-gray-700 hover:bg-gray-50 hover:text-blue-600 cursor-pointer flex items-center gap-2"
-              >
-                <ArrowLeftIcon className="w-4 h-4" />
-                Back to Home
-              </Button>
               <Button
                 onClick={() => setAdminView("analytics")}
                 variant={adminView === "analytics" ? "default" : "outline"}
@@ -3680,16 +3642,6 @@ export function Dashboard({}: DashboardProps) {
                 concepts={concepts}
                 onConceptSelect={handleConceptSelect}
               />
-              {/* Show chat input only after concepts are generated */}
-              {Array.isArray(concepts) && concepts.length > 0 && (
-                <div className="mt-auto">
-                  <ChatInput
-                    message={chatMessage}
-                    onMessageChange={setChatMessage}
-                    onSend={() => console.log("Send message:", chatMessage)}
-                  />
-                </div>
-              )}
             </>
           )}
         </div>

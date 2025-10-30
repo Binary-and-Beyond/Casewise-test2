@@ -1165,6 +1165,9 @@ def google_auth(request: GoogleAuthRequest):
         
         if existing_user:
             print(f"GOOGLE_AUTH: Existing user found: {email}")
+            # Block login if user is inactive
+            if not existing_user.get("is_active", True):
+                raise HTTPException(status_code=400, detail="Inactive user")
             user = existing_user
         else:
             print(f"GOOGLE_AUTH: Creating new user: {email}")
@@ -1465,16 +1468,13 @@ async def admin_update_users(
                 if update.role is not None:
                     update_data["role"] = update.role
                 if update.status is not None:
-                    # Map status to is_active field
+                    # Allow only active/inactive; inactive disables login
                     if update.status == "active":
                         update_data["is_active"] = True
                         update_data["status"] = "active"
                     elif update.status == "inactive":
                         update_data["is_active"] = False
                         update_data["status"] = "inactive"
-                    elif update.status == "suspended":
-                        update_data["is_active"] = False
-                        update_data["status"] = "suspended"
                 
                 if not update_data:
                     errors.append(f"No valid fields to update for user {update.user_id}")
@@ -1923,8 +1923,17 @@ async def get_user_analytics(current_user: dict = Depends(get_current_user)):
             minutes = time_spent_minutes % 60
             time_spent = f"{hours}h {minutes}m"
         
-        # Determine most common question type (placeholder)
-        most_questions_type = "Easy"  # This would be calculated from actual data
+        # Determine most common question type based on attempted questions by difficulty
+        diff_counts = user.get("difficulty_counts", {}) or {}
+        if diff_counts:
+            # pick max of easy/moderate/hard
+            normalized = {k.lower(): int(v) for k, v in diff_counts.items()}
+            choice = max([("Easy", normalized.get("easy", 0)),
+                          ("Moderate", normalized.get("moderate", 0)),
+                          ("Hard", normalized.get("hard", 0))], key=lambda x: x[1])[0]
+            most_questions_type = choice
+        else:
+            most_questions_type = "Easy"
         
         # Calculate average score
         average_score = 0
@@ -1965,6 +1974,7 @@ class MCQCompletionRequest(BaseModel):
     correct_answers: int
     total_questions: int
     case_id: Optional[str] = None
+    case_difficulty: Optional[str] = None
 
 @app.post("/analytics/mcq-completion")
 async def update_mcq_analytics(
@@ -2001,6 +2011,15 @@ async def update_mcq_analytics(
         new_correct = current_correct + request.correct_answers
         new_attempted = current_attempted + request.total_questions
         
+        # Update difficulty counters based on attempted questions
+        difficulty_field = (request.case_difficulty or "").lower()
+        if difficulty_field in ["easy", "moderate", "hard"]:
+            diff_counts = user.get("difficulty_counts", {})
+            current = int(diff_counts.get(difficulty_field, 0))
+            diff_counts[difficulty_field] = current + request.total_questions
+        else:
+            diff_counts = user.get("difficulty_counts", {})
+
         # Calculate new average score
         new_average_score = int((new_correct / new_attempted) * 100) if new_attempted > 0 else 0
         
@@ -2013,6 +2032,7 @@ async def update_mcq_analytics(
                     "total_questions_correct": new_correct,
                     "total_questions_attempted": new_attempted,
                     "average_score": new_average_score,
+                    "difficulty_counts": diff_counts,
                     "updated_at": datetime.now()
                 }
             }
@@ -2773,21 +2793,7 @@ async def generate_mcqs(
         # Build difficulty instruction - make it very explicit
         difficulty_instruction = ""
         if request.difficulty:
-            difficulty_instruction = f"""
-CRITICAL DIFFICULTY REQUIREMENT:
-- ALL {request.num_questions} questions MUST be {request.difficulty} difficulty level
-- DO NOT mix difficulty levels
-- EVERY single question must be {request.difficulty}
-- This is mandatory and non-negotiable"""
-        else:
-            difficulty_instruction = "\n- Assign difficulty (Easy/Moderate/Hard)"
-        
-        # Build hint instruction based on request
-        hint_instruction = ""
-        hint_field = ""
-        if request.include_hints:
-            hint_instruction = "\n        - Include helpful hints that guide students toward the correct answer without giving it away"
-            hint_field = ',\n                "hint": "Helpful hint that guides toward the correct answer without revealing it"'
+            difficulty_instruction = f"""- Assign difficulty (Easy/Moderate/Hard)"""
         
         system_prompt = f"""You are a medical educator. Generate {request.num_questions} medical MCQ questions from this content:{case_context}
 
@@ -2799,12 +2805,12 @@ Requirements:
 - 4 options per question (A, B, C, D)
 - One correct answer
 - Include explanations
-- Focus on key medical concepts{hint_instruction}
+- Focus on key medical concepts
 
 CRITICAL: ALL questions must have EXACTLY the same difficulty level: "{request.difficulty or 'Moderate'}"
 
 Example of correct format (ALL questions must follow this pattern):
-[{{"id": "mcq_1", "question": "What is...?", "options": [{{"id": "A", "text": "Option A", "is_correct": false}}, {{"id": "B", "text": "Correct answer", "is_correct": true}}, {{"id": "C", "text": "Option C", "is_correct": false}}, {{"id": "D", "text": "Option D", "is_correct": false}}], "explanation": "Explanation here", "difficulty": "{request.difficulty or 'Moderate'}"{hint_field}}}, {{"id": "mcq_2", "question": "Another question?", "options": [{{"id": "A", "text": "Option A", "is_correct": true}}, {{"id": "B", "text": "Option B", "is_correct": false}}, {{"id": "C", "text": "Option C", "is_correct": false}}, {{"id": "D", "text": "Option D", "is_correct": false}}], "explanation": "Another explanation", "difficulty": "{request.difficulty or 'Moderate'}"{hint_field}}}]
+[{{"id": "mcq_1", "question": "What is...?", "options": [{{"id": "A", "text": "Option A", "is_correct": false}}, {{"id": "B", "text": "Correct answer", "is_correct": true}}, {{"id": "C", "text": "Option C", "is_correct": false}}, {{"id": "D", "text": "Option D", "is_correct": false}}], "explanation": "Explanation here", "difficulty": "{request.difficulty or 'Moderate'}"}}, {{"id": "mcq_2", "question": "Another question?", "options": [{{"id": "A", "text": "Option A", "is_correct": true}}, {{"id": "B", "text": "Option B", "is_correct": false}}, {{"id": "C", "text": "Option C", "is_correct": false}}, {{"id": "D", "text": "Option D", "is_correct": false}}], "explanation": "Another explanation", "difficulty": "{request.difficulty or 'Moderate'}"}}]
 
 Return JSON array only with ALL questions having difficulty: "{request.difficulty or 'Moderate'}" """
         
@@ -2950,7 +2956,7 @@ async def identify_concepts(
         You are an expert medical educator specializing in concept identification. Based on the following document content, identify {request.num_concepts} key medical concepts that are most important for learning.
 
         Document Content:
-        {document['content'][:3000]}
+        {document['content'][:500]}
 
         IMPORTANT INSTRUCTIONS:
         - Identify the most important medical concepts from the content
@@ -3078,7 +3084,7 @@ async def auto_generate_content(
             try:
                 cases_prompt = f"""Generate {request.num_cases} medical cases from this content:
 
-{document['content'][:2000]}
+{document['content'][:500]}
 
 Return JSON array:
 [{{"title": "Case Title", "description": "Brief case description", "key_points": ["point1", "point2", "point3"], "difficulty": "Easy|Moderate|Hard"}}]
@@ -3166,7 +3172,7 @@ Generate exactly {request.num_cases} unique cases."""
             try:
                 mcq_prompt = f"""Generate {request.num_mcqs} MCQ questions from this content:
 
-{document['content'][:2000]}
+{document['content'][:500]}
 
 Return JSON array:
 [{{"id": "mcq_1", "question": "Medical question?", "options": [{{"id": "A", "text": "Option A", "is_correct": false}}, {{"id": "B", "text": "Correct answer", "is_correct": true}}, {{"id": "C", "text": "Option C", "is_correct": false}}, {{"id": "D", "text": "Option D", "is_correct": false}}], "explanation": "Brief explanation", "difficulty": "Easy|Moderate|Hard"}}]
@@ -3292,7 +3298,7 @@ Generate exactly {request.num_mcqs} questions."""
             try:
                 concepts_prompt = f"""Identify {request.num_concepts} key medical concepts from this content:
 
-{document['content'][:2000]}
+{document['content'][:500]}
 
 Return JSON array:
 [{{"id": "concept_1", "title": "Medical Concept", "description": "Brief concept description", "importance": "High|Medium|Low"}}]
@@ -3373,7 +3379,7 @@ Identify exactly {request.num_concepts} concepts."""
             try:
                 titles_prompt = f"""Generate {request.num_titles} case titles from this document:
 
-{document['content'][:2000]}
+{document['content'][:500]}
 
 Return JSON array only:
 [
@@ -3500,7 +3506,7 @@ async def quick_generate_content(
             try:
                 mcq_prompt = f"""Generate {request.num_mcqs} MCQ questions from this document:
 
-{document['content'][:1500]}
+{document['content'][:500]}
 
 Return JSON array only:
 [

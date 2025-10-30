@@ -747,6 +747,7 @@ class ApiService {
     correct_answers: number;
     total_questions: number;
     case_id?: string;
+    case_difficulty?: string;
   }): Promise<any> {
     console.log("🌐 API: Updating MCQ analytics...");
     console.log("🌐 API: Data:", data);

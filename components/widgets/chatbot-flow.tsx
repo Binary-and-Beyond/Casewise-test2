@@ -429,51 +429,20 @@ export function ChatbotFlow({ document, onBack }: ChatbotFlowProps) {
   // MCQ completion handlers
   const handleMCQCompletion = useCallback(
     (correctAnswers: number, totalQuestions: number) => {
-      console.log("🎯 MCQ Completion triggered!");
-      console.log("📊 Correct answers:", correctAnswers);
-      console.log("📊 Total questions:", totalQuestions);
-
       setCompletionStats({ correct: correctAnswers, total: totalQuestions });
       setShowCompletionPopup(true);
       setHasUnsavedProgress(false); // Progress is now saved/completed
-
-      console.log("✅ Completion popup should now be visible");
-      console.log("🔍 showCompletionPopup state should be true");
     },
     []
   );
 
   const handleCompletionPopupClose = () => {
-    console.log("🔄 Closing completion popup (chatbot-flow)");
     setShowCompletionPopup(false);
   };
 
   const handleCompletionPopupContinue = async () => {
-    console.log("🔄 Finishing completion popup (chatbot-flow)");
-    console.log("📊 Completion stats:", completionStats);
-    console.log("📋 Selected case:", selectedCase);
-
-    try {
-      // Update user analytics with MCQ completion data
-      const analyticsData = {
-        correct_answers: completionStats.correct,
-        total_questions: completionStats.total,
-        case_id: selectedCase?.id,
-      };
-
-      console.log("📤 Sending analytics data:", analyticsData);
-
-      const result = await apiService.updateMCQAnalytics(analyticsData);
-
-      console.log("✅ Analytics updated successfully:", result);
-    } catch (error) {
-      console.error("❌ Failed to update analytics:", error);
-      console.error("❌ Error details:", error);
-      // Don't block the user flow if analytics update fails
-    }
-
+    // Analytics were already submitted on completion; only close the popup here
     setShowCompletionPopup(false);
-    // Could navigate to next section or show summary
   };
 
   // Track when user starts answering questions
