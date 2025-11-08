@@ -4,27 +4,31 @@ import { Button } from "@/components/ui/button";
 interface ActionButtonsProps {
   onGenerateMCQs: () => void;
   onIdentifyConcepts: () => void;
+  disabled?: boolean;
 }
 
 export function ActionButtons({
   onGenerateMCQs,
   onIdentifyConcepts,
+  disabled = false,
 }: ActionButtonsProps) {
   return (
     <div className="flex gap-4">
       <Button
         variant="outline"
         className="flex-1 bg-transparent"
-        onClick={onGenerateMCQs}
+        onClick={onIdentifyConcepts}
+        disabled={disabled}
       >
-        Generate MCQs
+        Identify Concepts
       </Button>
       <Button
         variant="outline"
         className="flex-1 bg-transparent"
-        onClick={onIdentifyConcepts}
+        onClick={onGenerateMCQs}
+        disabled={disabled}
       >
-        Identify Concepts
+        Generate MCQs
       </Button>
     </div>
   );

@@ -47,7 +47,10 @@ export function InteractiveMCQQuestion({
   const generateDynamicHint = async () => {
     if (isGeneratingHint) return;
 
+    // Show loading state immediately
     setIsGeneratingHint(true);
+    setShowHint(true); // Show hint container immediately with loading animation
+    
     try {
       const response = await apiService.generateDynamicHint({
         question_id: question.id,
@@ -57,11 +60,12 @@ export function InteractiveMCQQuestion({
         document_context: undefined, // We could pass document context if available
       });
       setDynamicHint(response.hint);
-      setShowHint(true);
     } catch (error) {
       console.error("Failed to generate dynamic hint:", error);
-      // Fallback to static hint
-      setShowHint(true);
+      // Fallback to static hint if available
+      if (!question.hint) {
+        setDynamicHint("Think about the key concepts in the question.");
+      }
     } finally {
       setIsGeneratingHint(false);
     }
@@ -245,43 +249,56 @@ export function InteractiveMCQQuestion({
               </div>
             )}
 
-            {/* Hint Display */}
-            {showHint && attempts < 3 && !isCorrect && (
-              <div className="p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
-                <div className="flex items-center">
-                  <span className="text-yellow-600 text-lg mr-2">💡</span>
-                  <span className="font-medium text-yellow-800">
-                    Hint:{" "}
+            {/* Hint Display - Show immediately when generating */}
+            {(showHint || isGeneratingHint) && attempts < 3 && !isCorrect && (
+              <div className="p-4 bg-yellow-50 border-2 border-yellow-300 rounded-lg shadow-sm">
+                <div className="flex items-start">
+                  <span className="text-yellow-600 text-xl mr-3 mt-0.5">💡</span>
+                  <div className="flex-1">
+                    <span className="font-semibold text-yellow-900 block mb-1">
+                      Hint:
+                    </span>
                     {isGeneratingHint ? (
-                      <span className="flex items-center">
-                        <svg
-                          className="animate-spin -ml-1 mr-2 h-4 w-4 text-yellow-600"
-                          xmlns="http://www.w3.org/2000/svg"
-                          fill="none"
-                          viewBox="0 0 24 24"
-                        >
-                          <circle
-                            className="opacity-25"
-                            cx="12"
-                            cy="12"
-                            r="10"
-                            stroke="currentColor"
-                            strokeWidth="4"
-                          ></circle>
-                          <path
-                            className="opacity-75"
-                            fill="currentColor"
-                            d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                          ></path>
-                        </svg>
-                        Generating AI hint...
-                      </span>
+                      <div className="flex items-center space-x-3 py-2">
+                        <div className="relative">
+                          <svg
+                            className="animate-spin h-5 w-5 text-yellow-600"
+                            xmlns="http://www.w3.org/2000/svg"
+                            fill="none"
+                            viewBox="0 0 24 24"
+                          >
+                            <circle
+                              className="opacity-25"
+                              cx="12"
+                              cy="12"
+                              r="10"
+                              stroke="currentColor"
+                              strokeWidth="4"
+                            ></circle>
+                            <path
+                              className="opacity-75"
+                              fill="currentColor"
+                              d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                            ></path>
+                          </svg>
+                        </div>
+                        <div className="flex flex-col">
+                          <span className="text-yellow-800 font-medium">
+                            Generating AI hint...
+                          </span>
+                          <span className="text-yellow-600 text-sm mt-1">
+                            This may take a few seconds
+                          </span>
+                        </div>
+                      </div>
                     ) : (
-                      dynamicHint ||
-                      question.hint ||
-                      "Think about the key concepts in the question."
+                      <p className="text-yellow-900 leading-relaxed">
+                        {dynamicHint ||
+                          question.hint ||
+                          "Think about the key concepts in the question."}
+                      </p>
                     )}
-                  </span>
+                  </div>
                 </div>
               </div>
             )}

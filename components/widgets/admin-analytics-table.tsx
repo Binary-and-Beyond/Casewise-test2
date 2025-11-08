@@ -40,28 +40,49 @@ export function AdminAnalyticsTable({
   const [error, setError] = useState<string | null>(null);
   const [hasChanges, setHasChanges] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [lastRefreshTime, setLastRefreshTime] = useState<Date | null>(null);
 
   // Fetch real user data from API
-  const fetchUsers = async () => {
+  const fetchUsers = async (isAutoRefresh = false) => {
     try {
-      setIsLoading(true);
+      if (!isAutoRefresh) {
+        setIsLoading(true);
+      } else {
+        setIsRefreshing(true);
+      }
       setError(null);
       const response = await apiService.getAllUsers();
       setUsers(response.users as AdminUser[]);
       setOriginalUsers(response.users as AdminUser[]);
       setHasChanges(false);
+      setLastRefreshTime(new Date());
+      console.log("✅ Admin analytics data refreshed successfully");
     } catch (error) {
       console.error("Failed to fetch users:", error);
       setError("Failed to load user data. Please try again.");
-      setUsers([]);
-      setOriginalUsers([]);
+      if (!isAutoRefresh) {
+        setUsers([]);
+        setOriginalUsers([]);
+      }
     } finally {
       setIsLoading(false);
+      setIsRefreshing(false);
     }
   };
 
   useEffect(() => {
     fetchUsers();
+    
+    // Auto-refresh every 30 seconds to get live updates
+    const refreshInterval = setInterval(() => {
+      console.log("🔄 Auto-refreshing admin analytics data...");
+      fetchUsers(true); // Pass true to indicate it's an auto-refresh
+    }, 30000); // Refresh every 30 seconds
+    
+    return () => {
+      clearInterval(refreshInterval);
+    };
   }, []);
 
   const handleSelectUser = (userId: string, checked: boolean) => {
@@ -117,6 +138,9 @@ export function AdminAnalyticsTable({
         "Time Spent",
         "Cases Uploaded",
         "MCQ Attempted",
+        "Questions Correct",
+        "Questions Attempted",
+        "Average Score",
         "Most Questions Type",
         "Last Active",
       ],
@@ -126,7 +150,10 @@ export function AdminAnalyticsTable({
         user.time_spent,
         user.cases_uploaded.toString(),
         user.mcq_attempted.toString(),
-        user.most_questions_type,
+        (user.total_questions_correct || 0).toString(),
+        (user.total_questions_attempted || 0).toString(),
+        `${user.average_score || 0}%`,
+        user.most_questions_type || "N/A",
         user.last_active,
       ]),
     ]
@@ -174,7 +201,7 @@ export function AdminAnalyticsTable({
   return (
     <div className="space-y-8 p-6">
       {/* Analytics Overview Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-8">
         <div className="bg-white p-8 rounded-lg shadow-sm border border-gray-200">
           <div className="flex items-center">
             <div className="p-3 bg-blue-100 rounded-lg">
@@ -201,31 +228,6 @@ export function AdminAnalyticsTable({
           </div>
         </div>
 
-        <div className="bg-white p-8 rounded-lg shadow-sm border border-gray-200">
-          <div className="flex items-center">
-            <div className="p-3 bg-green-100 rounded-lg">
-              <svg
-                className="w-6 h-6 text-green-600"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"
-                />
-              </svg>
-            </div>
-            <div className="ml-6">
-              <p className="text-sm font-medium text-gray-600 mb-1">
-                Total Users
-              </p>
-              <p className="text-3xl font-bold text-gray-900">{users.length}</p>
-            </div>
-          </div>
-        </div>
 
         <div className="bg-white p-8 rounded-lg shadow-sm border border-gray-200">
           <div className="flex items-center">
@@ -277,7 +279,69 @@ export function AdminAnalyticsTable({
                 MCQ Attempts
               </p>
               <p className="text-3xl font-bold text-gray-900">
-                {users.reduce((sum, user) => sum + user.mcq_attempted, 0)}
+                {users.reduce((sum, user) => sum + (user.mcq_attempted || 0), 0)}
+              </p>
+            </div>
+          </div>
+        </div>
+        
+        <div className="bg-white p-8 rounded-lg shadow-sm border border-gray-200">
+          <div className="flex items-center">
+            <div className="p-3 bg-indigo-100 rounded-lg">
+              <svg
+                className="w-6 h-6 text-indigo-600"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"
+                />
+              </svg>
+            </div>
+            <div className="ml-6">
+              <p className="text-sm font-medium text-gray-600 mb-1">
+                Total Questions Correct
+              </p>
+              <p className="text-3xl font-bold text-gray-900">
+                {users.reduce((sum, user) => sum + (user.total_questions_correct || 0), 0)}
+              </p>
+            </div>
+          </div>
+        </div>
+        
+        <div className="bg-white p-8 rounded-lg shadow-sm border border-gray-200">
+          <div className="flex items-center">
+            <div className="p-3 bg-teal-100 rounded-lg">
+              <svg
+                className="w-6 h-6 text-teal-600"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"
+                />
+              </svg>
+            </div>
+            <div className="ml-6">
+              <p className="text-sm font-medium text-gray-600 mb-1">
+                Average Score
+              </p>
+              <p className="text-3xl font-bold text-gray-900">
+                {users.length > 0
+                  ? Math.round(
+                      users.reduce((sum, user) => sum + (user.average_score || 0), 0) /
+                        users.length
+                    )
+                  : 0}
+                %
               </p>
             </div>
           </div>
@@ -296,17 +360,37 @@ export function AdminAnalyticsTable({
                 Monitor student activity and performance across the platform
               </p>
             </div>
-            <Button
-              onClick={() => {
-                fetchUsers();
-                setHasChanges(true); // Simulate changes for demo
-              }}
-              variant="outline"
-              size="sm"
-              className="text-blue-600 border-blue-300 hover:bg-blue-50"
-            >
-              🔄 Refresh
-            </Button>
+            <div className="flex items-center gap-4">
+              {lastRefreshTime && (
+                <span className="text-xs text-gray-500">
+                  Last updated: {lastRefreshTime.toLocaleTimeString()}
+                </span>
+              )}
+              {isRefreshing && (
+                <span className="text-xs text-blue-600 flex items-center gap-1">
+                  <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-blue-600"></div>
+                  Refreshing...
+                </span>
+              )}
+              <Button
+                onClick={() => {
+                  fetchUsers(false);
+                }}
+                variant="outline"
+                size="sm"
+                disabled={isRefreshing}
+                className="text-blue-600 border-blue-300 hover:bg-blue-50"
+              >
+                {isRefreshing ? (
+                  <div className="flex items-center gap-2">
+                    <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-blue-600"></div>
+                    Refreshing...
+                  </div>
+                ) : (
+                  "🔄 Refresh"
+                )}
+              </Button>
+            </div>
           </div>
         </div>
 
@@ -333,6 +417,15 @@ export function AdminAnalyticsTable({
                 </th>
                 <th className="px-8 py-4 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   MCQ Attempted
+                </th>
+                <th className="px-8 py-4 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Questions Correct
+                </th>
+                <th className="px-8 py-4 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Questions Attempted
+                </th>
+                <th className="px-8 py-4 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Average Score
                 </th>
                 <th className="px-8 py-4 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Most Questions Type
@@ -368,7 +461,26 @@ export function AdminAnalyticsTable({
                     {user.cases_uploaded}
                   </td>
                   <td className="px-8 py-5 whitespace-nowrap text-sm text-gray-900">
-                    {user.mcq_attempted}
+                    {user.mcq_attempted || 0}
+                  </td>
+                  <td className="px-8 py-5 whitespace-nowrap text-sm text-gray-900">
+                    {user.total_questions_correct || 0}
+                  </td>
+                  <td className="px-8 py-5 whitespace-nowrap text-sm text-gray-900">
+                    {user.total_questions_attempted || 0}
+                  </td>
+                  <td className="px-8 py-5 whitespace-nowrap">
+                    <span
+                      className={`inline-flex px-3 py-1 text-xs font-semibold rounded-full ${
+                        (user.average_score || 0) >= 80
+                          ? "bg-green-100 text-green-800"
+                          : (user.average_score || 0) >= 60
+                          ? "bg-yellow-100 text-yellow-800"
+                          : "bg-red-100 text-red-800"
+                      }`}
+                    >
+                      {user.average_score || 0}%
+                    </span>
                   </td>
                   <td className="px-8 py-5 whitespace-nowrap">
                     <span
@@ -380,7 +492,7 @@ export function AdminAnalyticsTable({
                           : "bg-yellow-100 text-yellow-800"
                       }`}
                     >
-                      {user.most_questions_type}
+                      {user.most_questions_type || "N/A"}
                     </span>
                   </td>
                   <td className="px-8 py-5 whitespace-nowrap text-sm text-gray-500">

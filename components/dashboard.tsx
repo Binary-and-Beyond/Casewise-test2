@@ -631,7 +631,12 @@ export function Dashboard({}: DashboardProps) {
       console.log("💾 Cached valid chats to localStorage");
 
       // Set the first chat as active if no active chat is set
-      if (validChats.length > 0 && !activeChat) {
+      // But only if we're on the main view and not explicitly trying to show the welcome screen
+      const showWelcomeScreen = typeof window !== "undefined" && 
+        localStorage.getItem("show_welcome_screen") === "true";
+      const isMainView = currentView === "main";
+      
+      if (validChats.length > 0 && !activeChat && !showWelcomeScreen && isMainView) {
         const newActiveChat = validChats[0].id;
         console.log("🎯 Setting first chat as active:", newActiveChat);
         setActiveChat(newActiveChat);
@@ -640,6 +645,12 @@ export function Dashboard({}: DashboardProps) {
         loadActiveChatContent(newActiveChat);
         // Load messages for the new active chat
         loadActiveChatMessages(newActiveChat);
+      } else if (showWelcomeScreen && isMainView) {
+        // Clear the flag after we've prevented auto-selection and we're on main view
+        if (typeof window !== "undefined") {
+          // Keep the flag until we're sure we're on main view
+          console.log("🎯 Welcome screen flag is set, preventing auto-selection");
+        }
       } else if (validChats.length > 0 && activeChat) {
         // Verify that the active chat still exists in the loaded chats
         const activeChatExists = validChats.some(
@@ -1608,6 +1619,10 @@ export function Dashboard({}: DashboardProps) {
 
     setActiveChat(chatId);
     localStorage.setItem("active_chat", chatId);
+    // Clear welcome screen flag when a chat is selected
+    if (typeof window !== "undefined") {
+      localStorage.removeItem("show_welcome_screen");
+    }
     navigateToView("main");
     setChatMessages([]);
     setSelectedCase("");
@@ -2045,9 +2060,16 @@ export function Dashboard({}: DashboardProps) {
   };
 
   const generateMCQsFromDocument = async (retryCount = 0) => {
+    // Prevent multiple simultaneous calls
+    if (isGeneratingMCQs === selectedCase && retryCount === 0) {
+      console.log("⏳ MCQ generation already in progress for this case, skipping...");
+      return;
+    }
+
     const currentDocument = getCurrentChatDocument();
     if (!currentDocument) {
       setUploadError("No document available for MCQ generation");
+      setIsGeneratingMCQs(null);
       return;
     }
 
@@ -2066,6 +2088,7 @@ export function Dashboard({}: DashboardProps) {
           selectedCase,
           "skipping generation"
         );
+        setIsGeneratingMCQs(null);
         return;
       } else {
         console.log(
@@ -2076,6 +2099,9 @@ export function Dashboard({}: DashboardProps) {
       }
     }
 
+    // Safety timeout: clear loading state after 2 minutes if still stuck
+    let safetyTimeout: NodeJS.Timeout | undefined;
+    
     try {
       setIsUploading(true);
       setUploadError("");
@@ -2085,6 +2111,16 @@ export function Dashboard({}: DashboardProps) {
       setUploadError(
         "🤖 Generating MCQs with AI... This may take 10-30 seconds."
       );
+
+      // Set up safety timeout
+      if (typeof window !== "undefined") {
+        safetyTimeout = setTimeout(() => {
+          console.warn("⚠️ MCQ generation timeout - clearing stuck state");
+          setIsGeneratingMCQs(null);
+          setIsUploading(false);
+          setUploadError("MCQ generation is taking longer than expected. Please try again.");
+        }, 120000); // 2 minutes safety timeout
+      }
 
       // Get the difficulty of the selected case
       const caseDifficulty = getCaseDifficulty(selectedCase);
@@ -2195,8 +2231,13 @@ export function Dashboard({}: DashboardProps) {
         );
       }
     } finally {
+      // Always clear loading states, even on error
       setIsUploading(false);
       setIsGeneratingMCQs(null);
+      // Clear any safety timeout
+      if (typeof safetyTimeout !== "undefined") {
+        clearTimeout(safetyTimeout);
+      }
       console.log("✅ MCQ generation state cleared");
     }
   };
@@ -2302,9 +2343,23 @@ export function Dashboard({}: DashboardProps) {
       return;
     }
 
+    // Safety timeout: clear loading state after 2 minutes if still stuck
+    let safetyTimeout: NodeJS.Timeout | undefined;
+    
     try {
       setIsUploading(true);
+      setIsGeneratingConcepts(true);
       setUploadError("");
+
+      // Set up safety timeout
+      if (typeof window !== "undefined") {
+        safetyTimeout = setTimeout(() => {
+          console.warn("⚠️ Concept generation timeout - clearing stuck state");
+          setIsGeneratingConcepts(false);
+          setIsUploading(false);
+          setUploadError("Concept generation is taking longer than expected. Please try again.");
+        }, 120000); // 2 minutes safety timeout
+      }
 
       // Use the new concepts API endpoint
       const response = await apiService.identifyConcepts(currentDocument.id, 5);
@@ -2357,7 +2412,14 @@ export function Dashboard({}: DashboardProps) {
         );
       }
     } finally {
+      // Always clear loading states, even on error
       setIsUploading(false);
+      setIsGeneratingConcepts(false);
+      // Clear any safety timeout
+      if (typeof safetyTimeout !== "undefined") {
+        clearTimeout(safetyTimeout);
+      }
+      console.log("✅ Concept generation state cleared");
     }
   };
 
@@ -2365,9 +2427,11 @@ export function Dashboard({}: DashboardProps) {
   const testAPIConnectivity = async () => {
     console.log("Testing API connectivity...");
     try {
-      const response = await fetch(
-        `${process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000"}/`
-      );
+      // Using localhost:8000 for local development
+      // TODO: Uncomment the line below and comment out the hardcoded URL when deploying
+      // const apiUrl = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000";
+      const apiUrl = "http://localhost:8000";
+      const response = await fetch(`${apiUrl}/`);
       const data = await response.json();
       console.log("Backend response:", data);
       return true;
@@ -2704,6 +2768,8 @@ export function Dashboard({}: DashboardProps) {
       | "notifications"
       | "chatbot-flow"
   ) => {
+    // Clear any error states when navigating
+    setUploadError("");
     // All views now have routes, so navigate to them
     navigateToView(view);
   };
@@ -2860,6 +2926,8 @@ export function Dashboard({}: DashboardProps) {
       "🔄 Finishing completion popup (dashboard) — no extra analytics call"
     );
     setShowCompletionPopup(false);
+    // Navigate back to the previous page
+    router.back();
   };
 
   // Navigation warning handlers
@@ -2957,7 +3025,15 @@ export function Dashboard({}: DashboardProps) {
           {/* Back to Home above heading */}
           <div>
             <Button
-              onClick={() => navigateToView("main")}
+              onClick={() => {
+                setUploadError("");
+                setActiveChat("");
+                if (typeof window !== "undefined") {
+                  localStorage.removeItem("active_chat");
+                  localStorage.setItem("show_welcome_screen", "true");
+                }
+                navigateToView("main");
+              }}
               variant="outline"
               className="px-6 py-2 border-gray-300 text-gray-700 hover:bg-gray-50 hover:text-blue-600 cursor-pointer flex items-center gap-2"
             >
@@ -3036,7 +3112,15 @@ export function Dashboard({}: DashboardProps) {
     }
     return (
       <MyAnalytics
-        onBackToHome={() => navigateToView("main")}
+        onBackToHome={() => {
+          setUploadError("");
+          setActiveChat("");
+          if (typeof window !== "undefined") {
+            localStorage.removeItem("active_chat");
+            localStorage.setItem("show_welcome_screen", "true");
+          }
+          navigateToView("main");
+        }}
         generatedCases={generatedCases}
       />
     );
@@ -3044,11 +3128,22 @@ export function Dashboard({}: DashboardProps) {
 
   const renderMainDashboard = () => {
     const currentFile = getCurrentChatFile();
+    
+    // Check if we should show welcome screen (no active chat and flag is set)
+    const showWelcomeScreen = typeof window !== "undefined" && 
+      localStorage.getItem("show_welcome_screen") === "true";
+    
+    // If welcome screen flag is set and we have no active chat, clear the flag
+    // This ensures the welcome screen stays visible
+    if (showWelcomeScreen && !activeChat) {
+      // Don't clear the flag here - keep it until user interacts
+      // The flag will be cleared when a chat is selected or when navigating away
+    }
 
     // Show dashboard immediately without loading state
 
-    // Show welcome screen if no chats exist
-    if (chats.length === 0) {
+    // Show welcome screen if no chats exist OR if welcome screen flag is set and no active chat
+    if (chats.length === 0 || (showWelcomeScreen && !activeChat)) {
       return (
         <div className="flex-1 p-8 flex flex-col items-center justify-center">
           <div className="text-center max-w-2xl">
@@ -3327,9 +3422,22 @@ export function Dashboard({}: DashboardProps) {
         </div>
 
         <CaseSelectionOptions
-          onGenerateMCQs={() => setCurrentViewWithPersistence("generate-mcqs")}
-          onIdentifyConcepts={() => navigateToView("identify-concepts")}
-          onExploreCases={() => setCurrentViewWithPersistence("explore-cases")}
+          onGenerateMCQs={() => {
+            if (!isGeneratingMCQs && !isUploading) {
+              setCurrentViewWithPersistence("generate-mcqs");
+            }
+          }}
+          onIdentifyConcepts={() => {
+            if (!isGeneratingConcepts && !isUploading) {
+              navigateToView("identify-concepts");
+            }
+          }}
+          onExploreCases={() => {
+            if (!isUploading) {
+              setCurrentViewWithPersistence("explore-cases");
+            }
+          }}
+          disabled={isGeneratingMCQs !== null || isGeneratingConcepts || isUploading}
         />
       </div>
     );
@@ -3553,12 +3661,17 @@ export function Dashboard({}: DashboardProps) {
         {/* Action Buttons */}
         <div className="mt-4">
           <ActionButtons
-            onGenerateMCQs={() =>
-              setCurrentViewWithPersistence("generate-mcqs")
-            }
-            onIdentifyConcepts={() =>
-              setCurrentViewWithPersistence("identify-concepts")
-            }
+            onGenerateMCQs={() => {
+              if (!isGeneratingMCQs && !isUploading) {
+                setCurrentViewWithPersistence("generate-mcqs");
+              }
+            }}
+            onIdentifyConcepts={() => {
+              if (!isGeneratingConcepts && !isUploading) {
+                setCurrentViewWithPersistence("identify-concepts");
+              }
+            }}
+            disabled={isGeneratingMCQs !== null || isGeneratingConcepts || isUploading}
           />
         </div>
       </div>

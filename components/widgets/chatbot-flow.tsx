@@ -298,6 +298,17 @@ export function ChatbotFlow({ document, onBack }: ChatbotFlowProps) {
 
     setIsLoading(true);
     setError("");
+    
+    // Safety timeout: clear loading state after 2 minutes if still stuck
+    let safetyTimeout: NodeJS.Timeout | undefined;
+    if (typeof window !== "undefined") {
+      safetyTimeout = setTimeout(() => {
+        console.warn("⚠️ MCQ generation timeout - clearing stuck state");
+        setIsLoading(false);
+        setError("MCQ generation is taking longer than expected. Please try again.");
+      }, 120000); // 2 minutes safety timeout
+    }
+    
     try {
       const response = await apiService.generateMCQs(
         document.id,
@@ -326,11 +337,23 @@ export function ChatbotFlow({ document, onBack }: ChatbotFlowProps) {
         setError(`${errorMessage} (Failed after 2 attempts)`);
       }
     } finally {
+      // Always clear loading state, even on error
       setIsLoading(false);
+      // Clear any safety timeout
+      if (typeof safetyTimeout !== "undefined") {
+        clearTimeout(safetyTimeout);
+      }
+      console.log("✅ MCQ generation state cleared");
     }
   };
 
   const handleIdentifyConcepts = async (retryCount = 0) => {
+    // Prevent multiple simultaneous calls
+    if (isLoading && retryCount === 0) {
+      console.log("⏳ Concept identification already in progress, skipping...");
+      return;
+    }
+
     // If we already have concepts, don't regenerate them
     if (concepts.length > 0) {
       console.log(
@@ -339,11 +362,23 @@ export function ChatbotFlow({ document, onBack }: ChatbotFlowProps) {
         "concepts"
       );
       setCurrentStep("concepts");
+      setIsLoading(false);
       return;
     }
 
     setIsLoading(true);
     setError("");
+    
+    // Safety timeout: clear loading state after 2 minutes if still stuck
+    let safetyTimeout: NodeJS.Timeout | undefined;
+    if (typeof window !== "undefined") {
+      safetyTimeout = setTimeout(() => {
+        console.warn("⚠️ Concept identification timeout - clearing stuck state");
+        setIsLoading(false);
+        setError("Concept identification is taking longer than expected. Please try again.");
+      }, 120000); // 2 minutes safety timeout
+    }
+    
     try {
       const response = await apiService.identifyConcepts(document.id, 5);
       setConcepts(response.concepts);
@@ -372,13 +407,36 @@ export function ChatbotFlow({ document, onBack }: ChatbotFlowProps) {
         );
       }
     } finally {
+      // Always clear loading state, even on error
       setIsLoading(false);
+      // Clear any safety timeout
+      if (typeof safetyTimeout !== "undefined") {
+        clearTimeout(safetyTimeout);
+      }
+      console.log("✅ Concept identification state cleared");
     }
   };
 
   const handleExploreCase = async () => {
+    // Prevent multiple simultaneous calls
+    if (isLoading) {
+      console.log("⏳ Explore case already in progress, skipping...");
+      return;
+    }
+
     setIsLoading(true);
     setError("");
+    
+    // Safety timeout: clear loading state after 30 seconds if still stuck
+    let safetyTimeout: NodeJS.Timeout | undefined;
+    if (typeof window !== "undefined") {
+      safetyTimeout = setTimeout(() => {
+        console.warn("⚠️ Explore case timeout - clearing stuck state");
+        setIsLoading(false);
+        setError("Creating chat session is taking longer than expected. Please try again.");
+      }, 30000); // 30 seconds safety timeout
+    }
+    
     try {
       // Create a new chat session for case exploration
       const chatResponse = await apiService.createChat({
@@ -387,11 +445,18 @@ export function ChatbotFlow({ document, onBack }: ChatbotFlowProps) {
       setChatId(chatResponse.id);
       setCurrentStep("explore-case");
     } catch (error) {
-      setError(
-        error instanceof Error ? error.message : "Failed to create chat session"
-      );
+      const errorMessage =
+        error instanceof Error ? error.message : "Failed to create chat session";
+      console.error("Explore case error:", error);
+      setError(errorMessage);
     } finally {
+      // Always clear loading state, even on error
       setIsLoading(false);
+      // Clear any safety timeout
+      if (typeof safetyTimeout !== "undefined") {
+        clearTimeout(safetyTimeout);
+      }
+      console.log("✅ Explore case state cleared");
     }
   };
 
@@ -443,6 +508,8 @@ export function ChatbotFlow({ document, onBack }: ChatbotFlowProps) {
   const handleCompletionPopupContinue = async () => {
     // Analytics were already submitted on completion; only close the popup here
     setShowCompletionPopup(false);
+    // Navigate back to the previous page
+    onBack();
   };
 
   // Track when user starts answering questions
@@ -547,16 +614,10 @@ export function ChatbotFlow({ document, onBack }: ChatbotFlowProps) {
                 </h3>
                 <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
                   <button
-                    onClick={() => handleGenerateMCQs()}
-                    className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg"
-                  >
-                    [A] Generate MCQs
-                  </button>
-                  <button
                     onClick={() => handleIdentifyConcepts()}
                     className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg"
                   >
-                    [B] Identify Concepts
+                    [A] Identify Concepts
                   </button>
                   <button
                     onClick={() =>
@@ -564,7 +625,13 @@ export function ChatbotFlow({ document, onBack }: ChatbotFlowProps) {
                     }
                     className="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-lg"
                   >
-                    [C] Explore Case
+                    [B] Explore Case
+                  </button>
+                  <button
+                    onClick={() => handleGenerateMCQs()}
+                    className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg"
+                  >
+                    [C] Generate MCQs
                   </button>
                   <button
                     onClick={() => handleNavigationAttempt(handleStartOver)}
@@ -589,16 +656,11 @@ export function ChatbotFlow({ document, onBack }: ChatbotFlowProps) {
             </p>
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 max-w-2xl mx-auto">
               <Button
-                onClick={() => handleGenerateMCQs()}
-                className="bg-blue-600 hover:bg-blue-700 text-white p-6 h-auto flex flex-col gap-2"
-              >
-                <span className="text-lg">📝</span>
-                <span>Generate MCQs</span>
-                <span className="text-sm opacity-90">Test your knowledge</span>
-              </Button>
-              <Button
                 onClick={() => handleIdentifyConcepts()}
-                className="bg-green-600 hover:bg-green-700 text-white p-6 h-auto flex flex-col gap-2"
+                disabled={isLoading}
+                className={`bg-green-600 text-white p-6 h-auto flex flex-col gap-2 ${
+                  isLoading ? "opacity-50 cursor-not-allowed" : "hover:bg-green-700"
+                }`}
               >
                 <span className="text-lg">🧠</span>
                 <span>Identify Concepts</span>
@@ -606,11 +668,25 @@ export function ChatbotFlow({ document, onBack }: ChatbotFlowProps) {
               </Button>
               <Button
                 onClick={() => handleNavigationAttempt(handleExploreCase)}
-                className="bg-purple-600 hover:bg-purple-700 text-white p-6 h-auto flex flex-col gap-2"
+                disabled={isLoading}
+                className={`bg-purple-600 text-white p-6 h-auto flex flex-col gap-2 ${
+                  isLoading ? "opacity-50 cursor-not-allowed" : "hover:bg-purple-700"
+                }`}
               >
                 <span className="text-lg">💬</span>
                 <span>Explore Case</span>
                 <span className="text-sm opacity-90">Interactive chat</span>
+              </Button>
+              <Button
+                onClick={() => handleGenerateMCQs()}
+                disabled={isLoading}
+                className={`bg-blue-600 text-white p-6 h-auto flex flex-col gap-2 ${
+                  isLoading ? "opacity-50 cursor-not-allowed" : "hover:bg-blue-700"
+                }`}
+              >
+                <span className="text-lg">📝</span>
+                <span>Generate MCQs</span>
+                <span className="text-sm opacity-90">Test your knowledge</span>
               </Button>
             </div>
             <div className="mt-6">
@@ -652,28 +728,48 @@ export function ChatbotFlow({ document, onBack }: ChatbotFlowProps) {
               </h3>
               <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
                 <button
-                  onClick={() => handleGenerateMCQs()}
-                  className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg"
-                >
-                  Generate More MCQs
-                </button>
-                <button
                   onClick={() =>
                     handleNavigationAttempt(() => handleIdentifyConcepts())
                   }
-                  className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg"
+                  disabled={isLoading}
+                  className={`bg-green-600 text-white px-4 py-2 rounded-lg ${
+                    isLoading
+                      ? "opacity-50 cursor-not-allowed"
+                      : "hover:bg-green-700"
+                  }`}
                 >
                   Identify Concepts
                 </button>
                 <button
                   onClick={() => handleNavigationAttempt(handleExploreCase)}
-                  className="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-lg"
+                  disabled={isLoading}
+                  className={`bg-purple-600 text-white px-4 py-2 rounded-lg ${
+                    isLoading
+                      ? "opacity-50 cursor-not-allowed"
+                      : "hover:bg-purple-700"
+                  }`}
                 >
                   Explore Case
                 </button>
                 <button
+                  onClick={() => handleGenerateMCQs()}
+                  disabled={isLoading}
+                  className={`bg-blue-600 text-white px-4 py-2 rounded-lg ${
+                    isLoading
+                      ? "opacity-50 cursor-not-allowed"
+                      : "hover:bg-blue-700"
+                  }`}
+                >
+                  Generate More MCQs
+                </button>
+                <button
                   onClick={() => handleNavigationAttempt(handleStartOver)}
-                  className="border border-gray-300 text-gray-700 hover:bg-gray-50 px-4 py-2 rounded-lg"
+                  disabled={isLoading}
+                  className={`border border-gray-300 text-gray-700 px-4 py-2 rounded-lg ${
+                    isLoading
+                      ? "opacity-50 cursor-not-allowed"
+                      : "hover:bg-gray-50"
+                  }`}
                 >
                   Select Different Case
                 </button>

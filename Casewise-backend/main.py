@@ -947,13 +947,29 @@ async def catch_exceptions_middleware(request: Request, call_next):
 @app.options("/{path:path}")
 async def options_handler(path: str, request: Request):
     """Handle all OPTIONS requests for CORS preflight"""
-    origin = request.headers.get("origin", "https://casewise-beta.vercel.app")
+    allowed_origins = [
+        "https://casewise-beta.vercel.app",  # Production frontend
+        "http://localhost:3000",              # Local development
+        "http://localhost:3001",              # Alternative local port
+        "http://127.0.0.1:3000",             # Local development
+        "http://127.0.0.1:3001",             # Alternative local port
+    ]
+    
+    origin = request.headers.get("origin")
+    
+    # Validate origin
+    if origin and origin in allowed_origins:
+        allowed_origin = origin
+    else:
+        # Default to production frontend for unknown origins
+        allowed_origin = "https://casewise-beta.vercel.app"
+    
     return Response(
         status_code=200,
         headers={
-            "Access-Control-Allow-Origin": origin,
+            "Access-Control-Allow-Origin": allowed_origin,
             "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS, PATCH, HEAD",
-            "Access-Control-Allow-Headers": "Accept, Accept-Language, Content-Language, Content-Type, Authorization, X-Requested-With, Origin, Access-Control-Request-Method, Access-Control-Request-Headers, Cache-Control, Pragma, Expires",
+            "Access-Control-Allow-Headers": "Accept, Accept-Language, Content-Language, Content-Type, Authorization, X-Requested-With, Origin, Access-Control-Request-Method, Access-Control-Request-Headers, Cache-Control, Pragma, Expires, X-Google-Auth-User",
             "Access-Control-Allow-Credentials": "true",
             "Access-Control-Max-Age": "3600"
         }
@@ -2951,44 +2967,29 @@ async def identify_concepts(
         if not openai_client:
             raise Exception("OpenAI client not initialized")
         
-        # Create the prompt for concept identification
-        system_prompt = f"""
-        You are an expert medical educator specializing in concept identification. Based on the following document content, identify {request.num_concepts} key medical concepts that are most important for learning.
+        # Create the prompt for concept identification - optimized for speed and clarity
+        system_prompt = f"""Identify {request.num_concepts} key medical concepts from this content:
 
-        Document Content:
-        {document['content'][:500]}
+{document['content'][:500]}
 
-        IMPORTANT INSTRUCTIONS:
-        - Identify the most important medical concepts from the content
-        - Each concept should have a clear, descriptive title
-        - Include a comprehensive description explaining the concept
-        - Assign importance levels (High, Medium, Low) based on clinical relevance
-        - Focus on concepts that are educationally valuable
-        - Cover different aspects: pathophysiology, diagnosis, treatment, etc.
+Return JSON array only:
+[{{"id": "concept_1", "title": "Brief concept name", "description": "1-2 sentence explanation", "importance": "High|Medium|Low"}}]
 
-        CRITICAL: You must respond with ONLY a valid JSON array. Do not include any markdown formatting, explanations, or additional text. Start your response directly with [ and end with ].
-
-        Format your response as a JSON array with the following structure:
-        [
-            {{
-                "id": "concept_1",
-                "title": "Clear Concept Title (e.g., 'Pathophysiology of Myocardial Infarction')",
-                "description": "Comprehensive 2-3 sentence description explaining the concept, its clinical significance, and key learning points.",
-                "importance": "High/Medium/Low"
-            }}
-        ]
-        """
+Requirements:
+- Focus on clinically relevant concepts
+- Keep descriptions concise (1-2 sentences max)
+- Return valid JSON only, no markdown"""
         
         # Generate response from OpenAI
         response = openai_client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
-                {"role": "system", "content": "You are an expert medical educator specializing in concept identification. Always respond with valid JSON format."},
+                {"role": "system", "content": "Medical educator. Return JSON only."},
                 {"role": "user", "content": system_prompt}
             ],
-            temperature=0.7,
-            max_tokens=2000,
-            timeout=120  # 2 minutes timeout for concept identification
+            temperature=0.5,
+            max_tokens=800,
+            timeout=60  # Reduced timeout for faster response
         )
         
         # Parse the response
@@ -3733,62 +3734,30 @@ async def chat_with_ai(
             raise Exception("OpenAI client not initialized")
         
         print("AI: Creating prompt...")
-        # Create the chat prompt
-        system_prompt = f"""You are an expert medical AI assistant specializing in medical education and case-based learning. Your role is to provide comprehensive, detailed, and educational responses to help medical students understand complex medical concepts.
+        # Create the chat prompt - optimized for concise, focused responses
+        system_prompt = f"""Medical AI assistant. Provide concise, accurate answers.
 
-        IMPORTANT INSTRUCTIONS:
-        - Always provide detailed, comprehensive answers (minimum 3-4 paragraphs)
-        - Use specific medical terminology and explain it clearly
-        - Include relevant pathophysiology, diagnostic criteria, and treatment options
-        - Provide clinical reasoning and differential diagnoses when appropriate
-        - Give practical examples and clinical pearls
-        - Be thorough but accessible to medical students
-        - Never give vague or generic responses
-        - Format your response with clear sections and bullet points where appropriate
-        - Use markdown formatting for better readability (headers, bold text, lists)
+Question: {request.message}
+{document_context}
 
-        User Question: {request.message}
-        {document_context}
-        
-        Please provide a comprehensive, detailed response that thoroughly addresses the users query. Structure your response as follows:
-
-        ## Direct Answer
-        Provide a clear, direct answer to the question with specific details and context.
-
-        ## Pathophysiology & Mechanisms
-        Explain the underlying biological/medical mechanisms involved, including:
-        - Cellular and molecular processes
-        - Anatomical considerations
-        - Physiological pathways affected
-
-        ## Clinical Significance
-        Discuss the clinical implications and importance, covering:
-        - Impact on patient care
-        - Diagnostic considerations
-        - Treatment implications
-
-        ## Key Learning Points
-        - **Primary concept**: [Main learning objective]
-        - **Diagnostic criteria**: [Key diagnostic features]
-        - **Treatment approach**: [Management strategies]
-        - **Complications**: [Potential complications to watch for]
-        - **Prognosis**: [Expected outcomes and factors affecting prognosis]
-
-        ## Clinical Pearls
-        Provide practical tips and important clinical insights that medical students should remember for exams and practice.
-
-        Make your response educational, detailed, and valuable for medical learning."""
+Instructions:
+- Give direct, clear answers (2-3 paragraphs max)
+- Use medical terms with brief explanations
+- Focus on key points: diagnosis, treatment, clinical significance
+- Use bullet points for clarity
+- Be precise, avoid unnecessary detail"""
         
         print("AI: Generating response from OpenAI...")
         # Generate response from OpenAI
         response = openai_client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
-                {"role": "system", "content": "You are an expert medical AI assistant specializing in medical education and case-based learning."},
+                {"role": "system", "content": "Medical AI assistant. Provide concise, accurate answers."},
                 {"role": "user", "content": system_prompt}
             ],
-            temperature=0.7,
-            max_tokens=2000
+            temperature=0.5,
+            max_tokens=800,
+            timeout=60
         )
         
         print("SUCCESS: Response generated successfully")
@@ -4021,61 +3990,29 @@ async def send_chat_message(
         if not openai_client:
             raise Exception("OpenAI client not initialized")
         
-        # Create the chat prompt
-        system_prompt = f"""You are an expert medical AI assistant specializing in medical education and case-based learning. Your role is to provide comprehensive, detailed, and educational responses to help medical students understand complex medical concepts.
+        # Create the chat prompt - optimized for concise, focused responses
+        system_prompt = f"""Medical AI assistant. Provide concise, accurate answers.
 
-        IMPORTANT INSTRUCTIONS:
-        - Always provide detailed, comprehensive answers (minimum 3-4 paragraphs)
-        - Use specific medical terminology and explain it clearly
-        - Include relevant pathophysiology, diagnostic criteria, and treatment options
-        - Provide clinical reasoning and differential diagnoses when appropriate
-        - Give practical examples and clinical pearls
-        - Be thorough but accessible to medical students
-        - Never give vague or generic responses
-        - Format your response with clear sections and bullet points where appropriate
-        - Use markdown formatting for better readability (headers, bold text, lists)
+Question: {request.message}
+{document_context}
 
-        User Question: {request.message}
-        {document_context}
-        
-        Please provide a comprehensive, detailed response that thoroughly addresses the users query. Structure your response as follows:
-
-        ## Direct Answer
-        Provide a clear, direct answer to the question with specific details and context.
-
-        ## Pathophysiology & Mechanisms
-        Explain the underlying biological/medical mechanisms involved, including:
-        - Cellular and molecular processes
-        - Anatomical considerations
-        - Physiological pathways affected
-
-        ## Clinical Significance
-        Discuss the clinical implications and importance, covering:
-        - Impact on patient care
-        - Diagnostic considerations
-        - Treatment implications
-
-        ## Key Learning Points
-        - **Primary concept**: [Main learning objective]
-        - **Diagnostic criteria**: [Key diagnostic features]
-        - **Treatment approach**: [Management strategies]
-        - **Complications**: [Potential complications to watch for]
-        - **Prognosis**: [Expected outcomes and factors affecting prognosis]
-
-        ## Clinical Pearls
-        Provide practical tips and important clinical insights that medical students should remember for exams and practice.
-
-        Make your response educational, detailed, and valuable for medical learning."""
+Instructions:
+- Give direct, clear answers (2-3 paragraphs max)
+- Use medical terms with brief explanations
+- Focus on key points: diagnosis, treatment, clinical significance
+- Use bullet points for clarity
+- Be precise, avoid unnecessary detail"""
         
         # Generate response from OpenAI
         response = openai_client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
-                {"role": "system", "content": "You are an expert medical AI assistant specializing in medical education and case-based learning."},
+                {"role": "system", "content": "Medical AI assistant. Provide concise, accurate answers."},
                 {"role": "user", "content": system_prompt}
             ],
-            temperature=0.7,
-            max_tokens=4000
+            temperature=0.5,
+            max_tokens=800,
+            timeout=60
         )
         ai_response = response.choices[0].message.content
         
