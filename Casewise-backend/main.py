@@ -2895,11 +2895,33 @@ Return JSON array only with ALL questions having difficulty: "{request.difficult
             
             # BULLETPROOF: Completely ignore AI's difficulty and force case difficulty
             if request.difficulty:
-                # Always use the case difficulty, completely ignore what AI returned
-                question_difficulty = request.difficulty
-                print(f"🔒 Forcing difficulty to case difficulty: '{request.difficulty}' (ignoring AI's '{mcq_data.get('difficulty', 'unknown')}')")
+                # Normalize difficulty to ensure proper capitalization (Easy, Moderate, Hard)
+                difficulty_lower = request.difficulty.lower().strip()
+                if difficulty_lower == "easy":
+                    question_difficulty = "Easy"
+                elif difficulty_lower == "moderate":
+                    question_difficulty = "Moderate"
+                elif difficulty_lower == "hard":
+                    question_difficulty = "Hard"
+                else:
+                    # If invalid, default to Moderate
+                    question_difficulty = "Moderate"
+                    print(f"⚠️ Invalid difficulty '{request.difficulty}', defaulting to 'Moderate'")
+                
+                # Always use the normalized case difficulty, completely ignore what AI returned
+                print(f"🔒 Forcing difficulty to case difficulty: '{question_difficulty}' (ignoring AI's '{mcq_data.get('difficulty', 'unknown')}')")
             else:
                 question_difficulty = mcq_data.get("difficulty", "Moderate")
+                # Normalize AI's difficulty too
+                difficulty_lower = question_difficulty.lower().strip()
+                if difficulty_lower == "easy":
+                    question_difficulty = "Easy"
+                elif difficulty_lower == "moderate":
+                    question_difficulty = "Moderate"
+                elif difficulty_lower == "hard":
+                    question_difficulty = "Hard"
+                else:
+                    question_difficulty = "Moderate"
             
             question = MCQQuestion(
                 id=mcq_data["id"],
@@ -2912,10 +2934,21 @@ Return JSON array only with ALL questions having difficulty: "{request.difficult
         
         # Final validation: Ensure ALL questions have the same difficulty
         if request.difficulty:
+            # Normalize the expected difficulty
+            difficulty_lower = request.difficulty.lower().strip()
+            if difficulty_lower == "easy":
+                expected_difficulty = "Easy"
+            elif difficulty_lower == "moderate":
+                expected_difficulty = "Moderate"
+            elif difficulty_lower == "hard":
+                expected_difficulty = "Hard"
+            else:
+                expected_difficulty = "Moderate"
+            
             for i, question in enumerate(questions):
-                if question.difficulty != request.difficulty:
-                    print(f"🚨 CRITICAL: Question {i} has wrong difficulty '{question.difficulty}', forcing to '{request.difficulty}'")
-                    question.difficulty = request.difficulty
+                if question.difficulty != expected_difficulty:
+                    print(f"🚨 CRITICAL: Question {i} has wrong difficulty '{question.difficulty}', forcing to '{expected_difficulty}'")
+                    question.difficulty = expected_difficulty
         
         # Log the final difficulties for debugging
         difficulties = [q.difficulty for q in questions]

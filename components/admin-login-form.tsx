@@ -25,6 +25,7 @@ export function AdminLoginForm({
   const [showPassword, setShowPassword] = useState(false);
   const [passwordFocused, setPasswordFocused] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [isGoogleLoading, setIsGoogleLoading] = useState(false);
   const [error, setError] = useState("");
 
   const { adminLogin } = useAuth();
@@ -151,7 +152,7 @@ export function AdminLoginForm({
 
         <Button
           type="submit"
-          disabled={isLoading}
+          disabled={isLoading || isGoogleLoading}
           className="w-full h-12 bg-gray-700 hover:bg-gray-800 text-white font-medium rounded-md disabled:opacity-50"
         >
           {isLoading ? "Logging in..." : "Log In"}
@@ -168,7 +169,7 @@ export function AdminLoginForm({
               width: "100%",
             }}
           ></div>
-          {isLoading && (
+          {isGoogleLoading && (
             <div className="absolute inset-0 flex items-center justify-center bg-white bg-opacity-75 rounded border">
               <span className="text-sm text-gray-600">Signing in...</span>
             </div>

@@ -30,6 +30,7 @@ export function LoginForm({
   const [showPassword, setShowPassword] = useState(false);
   const [passwordFocused, setPasswordFocused] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [isGoogleLoading, setIsGoogleLoading] = useState(false);
   const [error, setError] = useState("");
 
   const { login, googleAuth } = useAuth();
@@ -65,6 +66,8 @@ export function LoginForm({
             client_id: clientId,
             callback: async (response: any) => {
               try {
+                setIsGoogleLoading(true);
+                setError("");
                 await googleAuth(response.credential);
                 onLoginSuccess();
               } catch (error) {
@@ -73,6 +76,8 @@ export function LoginForm({
                     ? error.message
                     : "Google authentication failed"
                 );
+              } finally {
+                setIsGoogleLoading(false);
               }
             },
             auto_select: false,
@@ -287,7 +292,7 @@ export function LoginForm({
 
         <Button
           type="submit"
-          disabled={isLoading}
+          disabled={isLoading || isGoogleLoading}
           className="w-full h-12 bg-gray-700 hover:bg-gray-800 text-white font-medium rounded-md disabled:opacity-50"
         >
           {isLoading ? "Logging in..." : "Log In"}
@@ -304,7 +309,7 @@ export function LoginForm({
               width: "100%",
             }}
           ></div>
-          {isLoading && (
+          {isGoogleLoading && (
             <div className="absolute inset-0 flex items-center justify-center bg-white bg-opacity-75 rounded border">
               <span className="text-sm text-gray-600">Signing in...</span>
             </div>

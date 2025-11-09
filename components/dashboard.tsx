@@ -2974,7 +2974,14 @@ export function Dashboard({}: DashboardProps) {
   // Helper function to get difficulty for selected case
   const getCaseDifficulty = (caseTitle: string): string => {
     const caseData = generatedCases.find((c) => c.title === caseTitle);
-    return caseData?.difficulty || "Moderate";
+    const difficulty = caseData?.difficulty || "Moderate";
+    
+    // Normalize difficulty to ensure proper capitalization (Easy, Moderate, Hard)
+    const normalized = difficulty.toLowerCase();
+    if (normalized === "easy") return "Easy";
+    if (normalized === "moderate") return "Moderate";
+    if (normalized === "hard") return "Hard";
+    return "Moderate"; // Default fallback
   };
 
   // Helper function to get difficulty color

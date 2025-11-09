@@ -310,13 +310,40 @@ export function ChatbotFlow({ document, onBack }: ChatbotFlowProps) {
     }
     
     try {
+      // Get the difficulty from the selected case
+      const selectedCaseData = caseTitles.find(
+        (c) => c.id === selectedCase?.id || c.title === selectedCase?.title
+      );
+      const caseDifficulty = selectedCaseData?.difficulty || "Moderate";
+      
+      // Normalize difficulty to ensure proper capitalization
+      const normalizedDifficulty = 
+        caseDifficulty.toLowerCase() === "easy" ? "Easy" :
+        caseDifficulty.toLowerCase() === "moderate" ? "Moderate" :
+        caseDifficulty.toLowerCase() === "hard" ? "Hard" : "Moderate";
+      
+      console.log(
+        "🎯 Generating MCQs for case:",
+        selectedCase?.title,
+        "with difficulty:",
+        normalizedDifficulty
+      );
+      
       const response = await apiService.generateMCQs(
         document.id,
         selectedCase?.id,
         5,
-        true // Include hints
+        true, // Include hints
+        normalizedDifficulty // Pass the normalized case difficulty
       );
-      setMCQQuestions(response.questions);
+      
+      // Force all questions to have the case difficulty
+      const correctedQuestions = response.questions.map((q) => ({
+        ...q,
+        difficulty: normalizedDifficulty, // Force to case difficulty
+      }));
+      
+      setMCQQuestions(correctedQuestions);
       setCurrentStep("mcq-questions");
     } catch (error) {
       const errorMessage =
