@@ -81,7 +81,7 @@ export function MCQCompletionPopup({
             disabled={isUpdating}
             className={`px-8 py-3 rounded-lg font-medium transition-colors ${
               isUpdating
-                ? "bg-gray-400 text-gray-200 cursor-not-allowed"
+                ? "bg-gray-400 text-gray-200"
                 : "bg-blue-600 hover:bg-blue-700 text-white"
             }`}
           >

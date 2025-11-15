@@ -686,7 +686,7 @@ export function ChatbotFlow({ document, onBack }: ChatbotFlowProps) {
                 onClick={() => handleIdentifyConcepts()}
                 disabled={isLoading}
                 className={`bg-green-600 text-white p-6 h-auto flex flex-col gap-2 ${
-                  isLoading ? "opacity-50 cursor-not-allowed" : "hover:bg-green-700"
+                  isLoading ? "opacity-50" : "hover:bg-green-700 cursor-pointer"
                 }`}
               >
                 <span className="text-lg">🧠</span>
@@ -697,7 +697,7 @@ export function ChatbotFlow({ document, onBack }: ChatbotFlowProps) {
                 onClick={() => handleNavigationAttempt(handleExploreCase)}
                 disabled={isLoading}
                 className={`bg-purple-600 text-white p-6 h-auto flex flex-col gap-2 ${
-                  isLoading ? "opacity-50 cursor-not-allowed" : "hover:bg-purple-700"
+                  isLoading ? "opacity-50" : "hover:bg-purple-700 cursor-pointer"
                 }`}
               >
                 <span className="text-lg">💬</span>
@@ -708,7 +708,7 @@ export function ChatbotFlow({ document, onBack }: ChatbotFlowProps) {
                 onClick={() => handleGenerateMCQs()}
                 disabled={isLoading}
                 className={`bg-blue-600 text-white p-6 h-auto flex flex-col gap-2 ${
-                  isLoading ? "opacity-50 cursor-not-allowed" : "hover:bg-blue-700"
+                  isLoading ? "opacity-50" : "hover:bg-blue-700 cursor-pointer"
                 }`}
               >
                 <span className="text-lg">📝</span>
@@ -761,7 +761,7 @@ export function ChatbotFlow({ document, onBack }: ChatbotFlowProps) {
                   disabled={isLoading}
                   className={`bg-green-600 text-white px-4 py-2 rounded-lg ${
                     isLoading
-                      ? "opacity-50 cursor-not-allowed"
+                      ? "opacity-50"
                       : "hover:bg-green-700"
                   }`}
                 >
@@ -772,7 +772,7 @@ export function ChatbotFlow({ document, onBack }: ChatbotFlowProps) {
                   disabled={isLoading}
                   className={`bg-purple-600 text-white px-4 py-2 rounded-lg ${
                     isLoading
-                      ? "opacity-50 cursor-not-allowed"
+                      ? "opacity-50"
                       : "hover:bg-purple-700"
                   }`}
                 >
@@ -783,7 +783,7 @@ export function ChatbotFlow({ document, onBack }: ChatbotFlowProps) {
                   disabled={isLoading}
                   className={`bg-blue-600 text-white px-4 py-2 rounded-lg ${
                     isLoading
-                      ? "opacity-50 cursor-not-allowed"
+                      ? "opacity-50"
                       : "hover:bg-blue-700"
                   }`}
                 >
@@ -794,7 +794,7 @@ export function ChatbotFlow({ document, onBack }: ChatbotFlowProps) {
                   disabled={isLoading}
                   className={`border border-gray-300 text-gray-700 px-4 py-2 rounded-lg ${
                     isLoading
-                      ? "opacity-50 cursor-not-allowed"
+                      ? "opacity-50"
                       : "hover:bg-gray-50"
                   }`}
                 >

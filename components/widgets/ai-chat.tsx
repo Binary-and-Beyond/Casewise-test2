@@ -251,17 +251,14 @@ export function AIChat({
         chatId,
         message: inputMessage.trim(),
         documentId,
+        caseTitle,
       });
       // Use the new chat session API
-      // If we have a case title, prepend it to the message for context
-      const messageWithContext = caseTitle
-        ? `[Context: ${caseTitle}] ${inputMessage.trim()}`
-        : inputMessage.trim();
-
       const apiResponse = await apiService.sendChatMessageToSession(
         mainChatId,
-        messageWithContext,
-        documentId
+        inputMessage.trim(),
+        documentId,
+        caseTitle // Pass case_title for explore cases mode
       );
       console.log("API response:", apiResponse);
 

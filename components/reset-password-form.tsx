@@ -153,7 +153,7 @@ export function ResetPasswordForm({
 
           <Button
             type="submit"
-            className="w-full h-12 bg-gray-700 hover:bg-gray-800 text-white font-medium rounded-md disabled:opacity-50 disabled:cursor-not-allowed"
+            className="w-full h-12 bg-gray-700 hover:bg-gray-800 text-white font-medium rounded-md disabled:opacity-50"
             disabled={isLoading}
           >
             {isLoading ? (

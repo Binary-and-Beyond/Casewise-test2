@@ -515,7 +515,7 @@ class MCQResponse(BaseModel):
 class ConceptRequest(BaseModel):
     """Concept identification request schema"""
     document_id: str
-    num_concepts: int = Field(default=3, ge=1, le=10)
+    num_concepts: int = Field(default=1, ge=1, le=1)  # Always generate 1 case breakdown
 
 class Concept(BaseModel):
     """Concept schema"""
@@ -523,6 +523,17 @@ class Concept(BaseModel):
     title: str
     description: str
     importance: str
+    difficulty: Optional[str] = None
+    # New structured fields for case breakdown
+    objective: Optional[str] = None
+    patient_profile: Optional[str] = None
+    history_of_present_illness: Optional[str] = None
+    past_medical_history: Optional[str] = None
+    medications: Optional[str] = None
+    examination: Optional[str] = None
+    initial_investigations: Optional[str] = None
+    case_progression: Optional[str] = None
+    final_diagnosis: Optional[str] = None
 
 class ConceptResponse(BaseModel):
     """Concept response schema"""
@@ -2700,7 +2711,8 @@ async def generate_case_titles(
         IMPORTANT INSTRUCTIONS:
         - Create realistic, clinically relevant case titles
         - Each case should have a clear, descriptive title (1-2 lines)
-        - Include a brief description (1-2 sentences) for each case
+        - DO NOT include case numbers (e.g., "Case 1:", "Case 2:") in the titles - just use descriptive titles like "Acute Myocardial Infarction in a 55-year-old Male"
+        - CRITICAL: Each case description MUST be exactly 250-300 words (minimum 250, maximum 300 words). Count the words carefully. The description should provide comprehensive context including patient presentation, clinical findings, diagnostic considerations, treatment approaches, and important learning points.
         - Assign appropriate difficulty levels (Easy, Moderate, Hard)
         - Make cases diverse and educational
         - Focus on different aspects of the medical content
@@ -2711,8 +2723,8 @@ async def generate_case_titles(
         [
             {{
                 "id": "case_1",
-                "title": "Specific Case Title (e.g., 'Acute Myocardial Infarction in a 55-year-old Male')",
-                "description": "Brief 1-2 sentence description of the case scenario and key learning points.",
+                "title": "Specific Case Title WITHOUT case numbers (e.g., 'Acute Myocardial Infarction in a 55-year-old Male' - NOT 'Case 1: Acute Myocardial Infarction')",
+                "description": "A detailed description that is EXACTLY 250-300 words (count carefully). Include comprehensive patient presentation, detailed clinical findings, diagnostic considerations, treatment approaches, and important learning points. The description must be between 250 and 300 words - no less, no more.",
                 "difficulty": "Easy/Moderate/Hard"
             }}
         ]
@@ -2722,11 +2734,11 @@ async def generate_case_titles(
         response = openai_client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
-                {"role": "system", "content": "You are an expert medical case generator. Always respond with valid JSON format."},
+                {"role": "system", "content": "You are an expert medical case generator. Each case description MUST be 250-300 words. Always respond with valid JSON format."},
                 {"role": "user", "content": system_prompt}
             ],
             temperature=0.7,
-            max_tokens=2000,
+            max_tokens=4000,  # Increased to accommodate 250-300 word descriptions for multiple cases
             timeout=120  # 2 minutes timeout for case title generation
         )
         
@@ -2748,10 +2760,13 @@ async def generate_case_titles(
             print(f"ERROR: JSON parsing failed: {e}")
             print(f"Response text: {response.choices[0].message.content[:500]}...")
             # If JSON parsing fails, create a fallback response based on document content
+            # Create a longer fallback description (250-300 words)
+            fallback_description = f"""This medical case scenario is based on the uploaded document content and presents a comprehensive clinical scenario designed for medical education. The case includes a detailed patient presentation with comprehensive demographic information, presenting complaint, and relevant social history that provides important context for understanding the clinical situation. The patient's medical history is thoroughly documented, including past medical conditions, previous surgeries, family history, and any relevant genetic or environmental factors that may influence the current presentation. Physical examination findings are described in detail, including vital signs, general appearance, and system-by-system examination results with both positive and negative findings that are crucial for differential diagnosis. Diagnostic test results are provided with specific values, reference ranges, and clinical interpretation to help students understand how laboratory and imaging studies contribute to the diagnostic process. Treatment considerations are explored, including first-line and alternative therapeutic options, with discussion of mechanism of action, indications, contraindications, and potential side effects. The case also addresses important learning points related to pathophysiology, clinical reasoning, differential diagnosis, and evidence-based medicine principles. This comprehensive approach ensures that medical students gain a thorough understanding of the clinical scenario, develop critical thinking skills, and learn to apply medical knowledge in realistic patient care situations. The case is designed to be educational, clinically relevant, and aligned with current medical practice guidelines and standards of care."""
+
             cases_data = [{
                 "id": f"case_{i+1}",
                 "title": f"Case {i+1} from {document.get('filename', 'Document')}",
-                "description": f"Medical case scenario based on the uploaded document content.",
+                "description": fallback_description,
                 "difficulty": "Moderate"
             } for i in range(request.num_cases)]
         
@@ -2789,7 +2804,7 @@ async def generate_mcqs(
                 "uploaded_by": current_user["id"]
             })
             if document and document.get("content"):
-                document_context = document['content'][:3000]
+                document_context = document['content'][:1000]  # Further reduced for faster processing
         except Exception:
             pass
     
@@ -2811,22 +2826,32 @@ async def generate_mcqs(
         if request.difficulty:
             difficulty_instruction = f"""- Assign difficulty (Easy/Moderate/Hard)"""
         
-        system_prompt = f"""You are a medical educator. Generate {request.num_questions} medical MCQ questions from this content:{case_context}
+        system_prompt = f"""TASK: GENERATE A SINGLE-BEST-ANSWER MULTIPLE-CHOICE QUESTION (MCQ) WITH RATIONALE
 
-Content: {document_context[:500]}
+Based on the preceding medical case information, generate {request.num_questions} multiple-choice question(s) designed to test a high-yield, essential clinical concept critical to the diagnosis or immediate management of the patient in the case.
 
-{difficulty_instruction}
+MCQ Structure and Constraints:
 
-Requirements:
-- 4 options per question (A, B, C, D)
-- One correct answer
-- Include explanations
-- Focus on key medical concepts
+Question Stem: The question must be presented as a **Case-Based Scenario Question**. Reference the patient's data, such as a lab result, physical exam finding, or the final diagnosis, and then ask a clear, specific question about a core concept (e.g., "What is the most likely long-term complication in this patient?", or "What is the mechanism of action of the first-line medication in this scenario?"). 
+
+Options: Provide exactly five (5) answer options (A, B, C, D, E). Only one option must be unequivocally correct. 
+
+Content Focus (Essential Knowledge): MUST test essential, high-yield clinical knowledge (e.g., differential diagnosis, next best step in management, critical pathophysiology, or drug mechanism). MAY test the name of a discoverer or a named disease/syndrome (e.g., Hashimoto's disease, Cushing's triad). MUST NOT test 'good-to-know' or trivial information. STRICTLY AVOID testing non-essential reference details, such as the author's name, publication year, or obscure section names, even if they are present in the source material.
+
+Distractors (Incorrect Options): The four incorrect options (distractors) must be **plausible**. They should represent common misconceptions, less likely differential diagnoses, or inappropriate next steps in management to effectively test the student's clinical reasoning and differentiation skills. 
+
+Mandatory Requirement: Answer Rationale
+
+Explanation: Immediately after the correct answer identifier, provide a concise Explanation (Rationale) for the correct answer. This explanation must: 
+
+a. Justify the Correct Answer: State clearly *why* the chosen option is correct. 
+
+Content: {document_context[:1000]}{case_context}
 
 CRITICAL: ALL questions must have EXACTLY the same difficulty level: "{request.difficulty or 'Moderate'}"
 
 Example of correct format (ALL questions must follow this pattern):
-[{{"id": "mcq_1", "question": "What is...?", "options": [{{"id": "A", "text": "Option A", "is_correct": false}}, {{"id": "B", "text": "Correct answer", "is_correct": true}}, {{"id": "C", "text": "Option C", "is_correct": false}}, {{"id": "D", "text": "Option D", "is_correct": false}}], "explanation": "Explanation here", "difficulty": "{request.difficulty or 'Moderate'}"}}, {{"id": "mcq_2", "question": "Another question?", "options": [{{"id": "A", "text": "Option A", "is_correct": true}}, {{"id": "B", "text": "Option B", "is_correct": false}}, {{"id": "C", "text": "Option C", "is_correct": false}}, {{"id": "D", "text": "Option D", "is_correct": false}}], "explanation": "Another explanation", "difficulty": "{request.difficulty or 'Moderate'}"}}]
+[{{"id": "mcq_1", "question": "A 52-year-old patient presents with [case-specific detail]. What is the most likely mechanism underlying this condition?", "options": [{{"id": "A", "text": "Option A (plausible distractor)", "is_correct": false}}, {{"id": "B", "text": "Correct answer", "is_correct": true}}, {{"id": "C", "text": "Option C (plausible distractor)", "is_correct": false}}, {{"id": "D", "text": "Option D (plausible distractor)", "is_correct": false}}, {{"id": "E", "text": "Option E (plausible distractor)", "is_correct": false}}], "explanation": "The correct answer is B because [clear justification of why this option is correct, referencing the case scenario and essential clinical knowledge].", "difficulty": "{request.difficulty or 'Moderate'}"}}]
 
 Return JSON array only with ALL questions having difficulty: "{request.difficulty or 'Moderate'}" """
         
@@ -2835,12 +2860,12 @@ Return JSON array only with ALL questions having difficulty: "{request.difficult
             response = openai_client.chat.completions.create(
                 model="gpt-4o-mini",
                 messages=[
-                    {"role": "system", "content": f"You are a medical educator. Generate ALL questions with EXACTLY the same difficulty: {request.difficulty or 'Moderate'}. Always respond with valid JSON format."},
+                    {"role": "system", "content": f"You are a medical educator. Generate single-best-answer MCQs with exactly 5 options (A-E) as case-based scenario questions. Test high-yield essential clinical concepts with plausible distractors. Include mandatory answer rationale. ALL questions must have EXACTLY the same difficulty: {request.difficulty or 'Moderate'}. Always respond with valid JSON format."},
                     {"role": "user", "content": system_prompt}
                 ],
-                temperature=0.1,  # Very low temperature for maximum consistency
-                max_tokens=1200,  # Further reduced token limit for faster generation
-                timeout=120  # Increased timeout to 2 minutes for concept generation
+                temperature=0.3,  # Slightly higher for faster generation while maintaining quality
+                max_tokens=1500,  # Reduced for faster generation
+                timeout=90  # Reduced timeout for faster response
             )
         except Exception as e:
             print(f"OpenAI API error: {e}")
@@ -2848,12 +2873,12 @@ Return JSON array only with ALL questions having difficulty: "{request.difficult
             response = openai_client.chat.completions.create(
                 model="gpt-4o-mini",
                 messages=[
-                    {"role": "system", "content": f"Generate medical MCQs in JSON format. ALL questions must have difficulty: {request.difficulty or 'Moderate'}"},
-                    {"role": "user", "content": f"Create {request.num_questions} medical MCQs from: {document_context[:800]}. ALL questions must be {request.difficulty or 'Moderate'} difficulty."}
+                    {"role": "system", "content": f"Generate single-best-answer medical MCQs with 5 options (A-E) in JSON format. ALL questions must have difficulty: {request.difficulty or 'Moderate'}. Questions must be case-based scenarios testing high-yield clinical concepts with plausible distractors."},
+                    {"role": "user", "content": f"Create {request.num_questions} case-based medical MCQs with 5 options each from: {document_context[:800]}. ALL questions must be {request.difficulty or 'Moderate'} difficulty. Each question must reference patient data and test essential clinical knowledge with plausible distractors."}
                 ],
-                temperature=0.1,
-                max_tokens=800,
-                timeout=60  # Increased timeout to 1 minute for fallback generation
+                temperature=0.3,  # Slightly higher for faster generation
+                max_tokens=1200,  # Reduced for faster fallback generation
+                timeout=60  # 1 minute timeout for fallback generation
             )
         
         # Parse the response
@@ -2876,15 +2901,15 @@ Return JSON array only with ALL questions having difficulty: "{request.difficult
             # If JSON parsing fails, create a fallback response
             mcqs_data = [{
                 "id": f"mcq_{i+1}",
-                "question": f"Question {i+1} based on document content?",
+                "question": f"Case-based question {i+1} based on document content?",
                 "options": [
-                    {"id": "A", "text": "Option A", "is_correct": False},
-                    {"id": "B", "text": "Option B", "is_correct": True},
-                    {"id": "C", "text": "Option C", "is_correct": False},
-                    {"id": "D", "text": "Option D", "is_correct": False},
-                    {"id": "E", "text": "Option E", "is_correct": False}
+                    {"id": "A", "text": "Option A (plausible distractor)", "is_correct": False},
+                    {"id": "B", "text": "Option B (correct answer)", "is_correct": True},
+                    {"id": "C", "text": "Option C (plausible distractor)", "is_correct": False},
+                    {"id": "D", "text": "Option D (plausible distractor)", "is_correct": False},
+                    {"id": "E", "text": "Option E (plausible distractor)", "is_correct": False}
                 ],
-                "explanation": "This is based on the document content.",
+                "explanation": "The correct answer is B because [justification referencing case scenario and essential clinical knowledge].",
                 "difficulty": request.difficulty or "Moderate"
             } for i in range(request.num_questions)]
         
@@ -3000,29 +3025,76 @@ async def identify_concepts(
         if not openai_client:
             raise Exception("OpenAI client not initialized")
         
-        # Create the prompt for concept identification - optimized for speed and clarity
-        system_prompt = f"""Identify {request.num_concepts} key medical concepts from this content:
+        # Create the prompt for concept identification - generate 1 detailed case breakdown
+        system_prompt = f"""Generate a single, comprehensive, multi-paragraph medical case breakdown related to the case scenario from the document content.
 
-{document['content'][:500]}
+CRITICAL REQUIREMENTS:
+- Each section must be DETAILED and MULTI-PARAGRAPH (not brief or single sentence)
+- The entire case breakdown should be comprehensive and educational
+- Each subsection must contain substantial detail (minimum 3-5 sentences per subsection)
 
-Return JSON array only:
-[{{"id": "concept_1", "title": "Brief concept name", "description": "1-2 sentence explanation", "importance": "High|Medium|Low"}}]
+Required Structure - The case MUST be structured with the following sections:
+
+1. Objective: A comprehensive paragraph (4-6 sentences) explaining what this case explores, the key learning objectives, and why this case is important for medical education. Include the clinical significance and educational value.
+
+2. Case Presentation with the following DETAILED subsections:
+   - Patient Profile: Detailed patient demographics including Age, Gender, occupation, relevant social history, and a comprehensive description of the presenting complaint (3-4 sentences minimum)
+   - History of Present Illness: A detailed, complex, multi-paragraph history of present illness (minimum 5-7 sentences) describing the timeline, progression, associated symptoms, and patient's experience
+   - Past Medical History: Comprehensive list of relevant past medical conditions with details about each condition, duration, and current status (3-4 sentences minimum)
+   - Medications: Detailed current medications list with dosages, frequency, duration of use, and indication for each medication (2-3 sentences minimum)
+   - Examination: Comprehensive, detailed physical examination findings including vital signs, general appearance, system-by-system examination with specific positive and negative findings (minimum 6-8 sentences)
+
+3. Initial Investigations: A detailed, comprehensive list of ordered diagnostic tests (e.g., Labs, Imaging, ECG) with specific test names, results, reference ranges, and interpretation. Explain what each result means and how it points toward the diagnosis (minimum 5-6 sentences).
+
+4. Case Progression/Intervention: A detailed, multi-paragraph description of how the case evolves (e.g., patient stabilizes, new symptom emerges, treatment is initiated, response to treatment). Include timeline, interventions, and patient response (minimum 4-5 sentences).
+
+5. Final Diagnosis/Learning Anchor: The final, definitive diagnosis with detailed explanation, and a comprehensive statement of the core learning objective or principle this case is designed to illustrate. Include pathophysiology, clinical reasoning, and key takeaways (minimum 4-5 sentences).
+
+Content: {document['content'][:1500]}
+
+CRITICAL: You must respond with ONLY a valid JSON object (not an array). Do not include any markdown formatting, explanations, or additional text. Start your response directly with {{ and end with }}.
+
+Return JSON with a single case object with SEPARATE KEYS for each section:
+{{
+  "id": "concept_1",
+  "title": "Case Title WITHOUT case numbers (e.g., 'The Phantom Limb Pain Puzzle' - NOT 'Case 1: The Phantom Limb Pain Puzzle')",
+  "objective": "[4-6 sentence comprehensive objective paragraph explaining what this case explores, key learning objectives, and why this case is important for medical education]",
+  "patient_profile": "[Detailed patient demographics including Age, Gender, occupation, relevant social history, and comprehensive description of presenting complaint - 3-4 sentences minimum]",
+  "history_of_present_illness": "[Comprehensive detailed history of present illness - minimum 5-7 sentences describing timeline, progression, associated symptoms, and patient's experience]",
+  "past_medical_history": "[Comprehensive list of relevant past medical conditions with details about each condition, duration, and current status - 3-4 sentences minimum]",
+  "medications": "[Detailed current medications list with dosages, frequency, duration of use, and indication for each medication - 2-3 sentences minimum]",
+  "examination": "[Comprehensive, detailed physical examination findings including vital signs, general appearance, system-by-system examination with specific positive and negative findings - minimum 6-8 sentences]",
+  "initial_investigations": "[Detailed, comprehensive list of ordered diagnostic tests (e.g., Labs, Imaging, ECG) with specific test names, results, reference ranges, and interpretation. Explain what each result means and how it points toward the diagnosis - minimum 5-6 sentences]",
+  "case_progression": "[Detailed, multi-paragraph description of how the case evolves (e.g., patient stabilizes, new symptom emerges, treatment is initiated, response to treatment). Include timeline, interventions, and patient response - minimum 4-5 sentences]",
+  "final_diagnosis": "[The final, definitive diagnosis with detailed explanation, and comprehensive statement of the core learning objective or principle this case is designed to illustrate. Include pathophysiology, clinical reasoning, and key takeaways - minimum 4-5 sentences]",
+  "importance": "High",
+  "difficulty": "Easy|Moderate|Hard"
+}}
+
+IMPORTANT FORMATTING RULES:
+- Each field must contain the ACTUAL CONTENT, not placeholders like [text]
+- Use \\n for line breaks within text fields
+- All fields are REQUIRED and must contain substantial, detailed content
+- Do NOT include section headers (like "Objective:" or "Patient Profile:") in the field values - just the content
 
 Requirements:
-- Focus on clinically relevant concepts
-- Keep descriptions concise (1-2 sentences max)
-- Return valid JSON only, no markdown"""
+- Generate exactly 1 comprehensive, detailed case
+- Each section must be MULTI-PARAGRAPH and DETAILED (not brief)
+- Case must have all required sections with substantial content
+- Case must be detailed, medically plausible, and educational
+- Return valid JSON object only (single {{}}), no markdown, no array brackets
+- Use the EXACT field names as shown above (objective, patient_profile, history_of_present_illness, etc.)"""
         
         # Generate response from OpenAI
         response = openai_client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
-                {"role": "system", "content": "Medical educator. Return JSON only."},
+                {"role": "system", "content": "Medical educator. Generate a single comprehensive, multi-paragraph medical case breakdown with all required sections. Each section must be DETAILED and MULTI-PARAGRAPH, not brief. Return JSON only."},
                 {"role": "user", "content": system_prompt}
             ],
-            temperature=0.5,
-            max_tokens=800,
-            timeout=60  # Reduced timeout for faster response
+            temperature=0.5,  # Reduced for faster, more focused generation
+            max_tokens=6000,  # Significantly increased for comprehensive multi-paragraph case generation
+            timeout=180  # Increased timeout for comprehensive case generation
         )
         
         # Parse the response
@@ -3032,26 +3104,135 @@ Requirements:
         try:
             # Try to extract JSON from the response if it's wrapped in markdown
             response_text = response.choices[0].message.content.strip()
+            print(f"🔍 Raw response text (first 500 chars): {response_text[:500]}")
+            
+            # Remove markdown code blocks if present
             if response_text.startswith('```json'):
                 response_text = response_text.replace('```json', '').replace('```', '').strip()
             elif response_text.startswith('```'):
                 response_text = response_text.replace('```', '').strip()
             
+            # Try to find JSON object/array in the text
+            # Look for first { or [
+            start_idx = response_text.find('{')
+            if start_idx == -1:
+                start_idx = response_text.find('[')
+            
+            if start_idx != -1:
+                # Find matching closing brace/bracket
+                brace_count = 0
+                bracket_count = 0
+                end_idx = start_idx
+                for i in range(start_idx, len(response_text)):
+                    if response_text[i] == '{':
+                        brace_count += 1
+                    elif response_text[i] == '}':
+                        brace_count -= 1
+                    elif response_text[i] == '[':
+                        bracket_count += 1
+                    elif response_text[i] == ']':
+                        bracket_count -= 1
+                    
+                    if brace_count == 0 and bracket_count == 0:
+                        end_idx = i + 1
+                        break
+                
+                if end_idx > start_idx:
+                    response_text = response_text[start_idx:end_idx]
+            
+            print(f"🔍 Extracted JSON text: {response_text[:500]}")
+            
             concepts_data = json.loads(response_text)
-            print(f"SUCCESS: Successfully parsed Concepts JSON: {len(concepts_data)} concepts")
+            print(f"✅ Successfully parsed Concepts JSON: {type(concepts_data)}")
+            
+            # Ensure we always return a single case as an array
+            if not isinstance(concepts_data, list):
+                print(f"📦 Converting single object to array")
+                concepts_data = [concepts_data]
+            
+            print(f"✅ Final concepts_data length: {len(concepts_data)}")
+            
         except json.JSONDecodeError as e:
-            print(f"ERROR: Concepts JSON parsing failed: {e}")
-            print(f"Response text: {response.choices[0].message.content[:500]}...")
+            print(f"❌ ERROR: Concepts JSON parsing failed: {e}")
+            print(f"❌ Response text: {response.choices[0].message.content[:1000]}...")
             # If JSON parsing fails, create a fallback response
             concepts_data = [{
-                "id": f"concept_{i+1}",
-                "title": f"Key Concept {i+1} from Document",
-                "description": "A medical concept extracted from the uploaded document content.",
-                "importance": "High"
-            } for i in range(request.num_concepts)]
+                "id": "concept_1",
+                "title": "Case 1: Medical Case",
+                "description": f"Objective: This case explores key clinical concepts related to the patient presentation.\n\nCase Presentation:\nPatient Profile: [Patient demographics and presenting complaint]\nHistory of Present Illness: [Detailed history]\nPast Medical History: [Relevant conditions]\nMedications: [Current medications]\nExamination: [Physical exam findings]\n\nInitial Investigations: [Diagnostic tests and results]\n\nCase Progression/Intervention: [Case evolution]\n\nFinal Diagnosis/Learning Anchor: [Diagnosis and learning objective]",
+                "importance": "High",
+                "difficulty": "Moderate"
+            }]
+        except Exception as e:
+            print(f"❌ ERROR: Unexpected error parsing concepts: {e}")
+            print(f"❌ Response text: {response.choices[0].message.content[:1000]}...")
+            concepts_data = [{
+                "id": "concept_1",
+                "title": "Case 1: Medical Case",
+                "description": f"Objective: This case explores key clinical concepts related to the patient presentation.\n\nCase Presentation:\nPatient Profile: [Patient demographics and presenting complaint]\nHistory of Present Illness: [Detailed history]\nPast Medical History: [Relevant conditions]\nMedications: [Current medications]\nExamination: [Physical exam findings]\n\nInitial Investigations: [Diagnostic tests and results]\n\nCase Progression/Intervention: [Case evolution]\n\nFinal Diagnosis/Learning Anchor: [Diagnosis and learning objective]",
+                "importance": "High",
+                "difficulty": "Moderate"
+            }]
         
-        # Convert to Concept objects
-        concepts = [Concept(**concept) for concept in concepts_data[:request.num_concepts]]
+        # Ensure we always return a single case as an array
+        if not isinstance(concepts_data, list):
+            concepts_data = [concepts_data]
+        
+        # Validate and convert to Concept objects
+        if len(concepts_data) == 0:
+            print(f"⚠️ WARNING: No concepts in response, using fallback")
+            concepts_data = [{
+                "id": "concept_1",
+                "title": "Case 1: Medical Case",
+                "description": f"Objective: This case explores key clinical concepts related to the patient presentation.\n\nCase Presentation:\nPatient Profile: [Patient demographics and presenting complaint]\nHistory of Present Illness: [Detailed history]\nPast Medical History: [Relevant conditions]\nMedications: [Current medications]\nExamination: [Physical exam findings]\n\nInitial Investigations: [Diagnostic tests and results]\n\nCase Progression/Intervention: [Case evolution]\n\nFinal Diagnosis/Learning Anchor: [Diagnosis and learning objective]",
+                "importance": "High",
+                "difficulty": "Moderate"
+            }]
+        
+        # Convert to Concept objects - take only the first case
+        try:
+            concept_data = concepts_data[0]
+            
+            # If new format with separate fields, construct description from them
+            if concept_data.get("objective") or concept_data.get("patient_profile"):
+                # New format - build description from separate fields
+                description_parts = []
+                if concept_data.get("objective"):
+                    description_parts.append(f"Objective: {concept_data.get('objective')}")
+                if concept_data.get("patient_profile") or concept_data.get("history_of_present_illness"):
+                    description_parts.append("\n\nCase Presentation:")
+                    if concept_data.get("patient_profile"):
+                        description_parts.append(f"\nPatient Profile: {concept_data.get('patient_profile')}")
+                    if concept_data.get("history_of_present_illness"):
+                        description_parts.append(f"\nHistory of Present Illness: {concept_data.get('history_of_present_illness')}")
+                    if concept_data.get("past_medical_history"):
+                        description_parts.append(f"\nPast Medical History: {concept_data.get('past_medical_history')}")
+                    if concept_data.get("medications"):
+                        description_parts.append(f"\nMedications: {concept_data.get('medications')}")
+                    if concept_data.get("examination"):
+                        description_parts.append(f"\nExamination: {concept_data.get('examination')}")
+                if concept_data.get("initial_investigations"):
+                    description_parts.append(f"\n\nInitial Investigations: {concept_data.get('initial_investigations')}")
+                if concept_data.get("case_progression"):
+                    description_parts.append(f"\n\nCase Progression/Intervention: {concept_data.get('case_progression')}")
+                if concept_data.get("final_diagnosis"):
+                    description_parts.append(f"\n\nFinal Diagnosis/Learning Anchor: {concept_data.get('final_diagnosis')}")
+                
+                concept_data["description"] = "".join(description_parts)
+            
+            concepts = [Concept(**concept_data)]
+            print(f"✅ Successfully created Concept object: {concepts[0].title}")
+        except Exception as e:
+            print(f"❌ ERROR: Failed to create Concept object: {e}")
+            print(f"❌ Concept data: {concepts_data[0] if concepts_data else 'None'}")
+            # Create a minimal valid concept
+            concepts = [Concept(
+                id=concepts_data[0].get("id", "concept_1"),
+                title=concepts_data[0].get("title", "Case 1: Medical Case"),
+                description=concepts_data[0].get("description", "Case breakdown not available"),
+                importance=concepts_data[0].get("importance", "High"),
+                difficulty=concepts_data[0].get("difficulty", "Moderate")
+            )]
         
         return ConceptResponse(
             document_id=request.document_id,
@@ -3657,6 +3838,7 @@ class ChatRequest(BaseModel):
     """Chat request schema"""
     message: str = Field(..., min_length=1, max_length=1000)
     document_id: Optional[str] = None
+    case_title: Optional[str] = None  # For explore cases mode
 
 class ChatResponse(BaseModel):
     """Chat response schema"""
@@ -3767,8 +3949,34 @@ async def chat_with_ai(
             raise Exception("OpenAI client not initialized")
         
         print("AI: Creating prompt...")
-        # Create the chat prompt - optimized for concise, focused responses
-        system_prompt = f"""Medical AI assistant. Provide concise, accurate answers.
+        
+        # Check if this is an explore cases request (when case_title is present in request)
+        # For explore cases, use the focused concept explanation format
+        case_title = request.case_title
+        
+        if case_title:
+            # Explore Cases Mode: Focused concept explanation format
+            system_prompt = f"""You are an expert Medical Educator tasked with providing focused, high-yield explanations of clinical concepts from a preceding case-based learning (CBL) scenario. 
+
+User Request: The user has selected the following Key Concept for detailed explanation: {request.message}
+
+Instructions for Response Generation:
+
+Medical Accuracy: Ensure the explanation is clinically precise and relevant to the learning objectives of a medical student. 
+
+Focus and Sufficiency: The explanation must be highly focused on the mechanism, pathophysiology, or clinical application mentioned in the concept. Provide *sufficient* detail to ensure a robust understanding, but do not include tangential information. 
+
+Concise Packaging Constraint: Present the entire explanation using a maximum of five (5) concise bullet points or short, distinct paragraphs. The total explanation text must not exceed **eight (8) lines** in length. 
+
+Structure: Begin with a brief introductory sentence, followed by the concise details in bullet points. Generate the robust, focused explanation now for the selected concept.
+
+Case Context: {case_title}
+{document_context}"""
+            
+            system_role = "Expert Medical Educator providing focused, high-yield explanations of clinical concepts from case-based learning scenarios."
+        else:
+            # General chat mode: standard medical assistant
+            system_prompt = f"""Medical AI assistant. Provide concise, accurate answers.
 
 Question: {request.message}
 {document_context}
@@ -3779,13 +3987,15 @@ Instructions:
 - Focus on key points: diagnosis, treatment, clinical significance
 - Use bullet points for clarity
 - Be precise, avoid unnecessary detail"""
+            
+            system_role = "Medical AI assistant. Provide concise, accurate answers."
         
         print("AI: Generating response from OpenAI...")
         # Generate response from OpenAI
         response = openai_client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
-                {"role": "system", "content": "Medical AI assistant. Provide concise, accurate answers."},
+                {"role": "system", "content": system_role},
                 {"role": "user", "content": system_prompt}
             ],
             temperature=0.5,
@@ -4000,9 +4210,9 @@ async def send_chat_message(
     if not chat:
         raise HTTPException(status_code=404, detail="Chat not found")
     
-    # Get AI response using existing chat endpoint logic
-    if not OPENAI_API_KEY:
-        raise HTTPException(status_code=500, detail="OpenAI API key not configured")
+        # Get AI response using existing chat endpoint logic
+        if not OPENAI_API_KEY:
+            raise HTTPException(status_code=500, detail="OpenAI API key not configured")
     
     # If document_id is provided, get the document context
     document_context = ""
@@ -4018,13 +4228,37 @@ async def send_chat_message(
         except Exception:
             pass
     
+    # Check if this is an explore cases request (when case_title is present in request or chat)
+    case_title = request.case_title or chat.get("case_title")
+    
     try:
         # Use OpenAI GPT-4 mini
         if not openai_client:
             raise Exception("OpenAI client not initialized")
         
-        # Create the chat prompt - optimized for concise, focused responses
-        system_prompt = f"""Medical AI assistant. Provide concise, accurate answers.
+        if case_title:
+            # Explore Cases Mode: Focused concept explanation format
+            system_prompt = f"""You are an expert Medical Educator tasked with providing focused, high-yield explanations of clinical concepts from a preceding case-based learning (CBL) scenario. 
+
+User Request: The user has selected the following Key Concept for detailed explanation: {request.message}
+
+Instructions for Response Generation:
+
+Medical Accuracy: Ensure the explanation is clinically precise and relevant to the learning objectives of a medical student. 
+
+Focus and Sufficiency: The explanation must be highly focused on the mechanism, pathophysiology, or clinical application mentioned in the concept. Provide *sufficient* detail to ensure a robust understanding, but do not include tangential information. 
+
+Concise Packaging Constraint: Present the entire explanation using a maximum of five (5) concise bullet points or short, distinct paragraphs. The total explanation text must not exceed **eight (8) lines** in length. 
+
+Structure: Begin with a brief introductory sentence, followed by the concise details in bullet points. Generate the robust, focused explanation now for the selected concept.
+
+Case Context: {case_title}
+{document_context}"""
+            
+            system_role = "Expert Medical Educator providing focused, high-yield explanations of clinical concepts from case-based learning scenarios."
+        else:
+            # General chat mode: standard medical assistant
+            system_prompt = f"""Medical AI assistant. Provide concise, accurate answers.
 
 Question: {request.message}
 {document_context}
@@ -4035,12 +4269,14 @@ Instructions:
 - Focus on key points: diagnosis, treatment, clinical significance
 - Use bullet points for clarity
 - Be precise, avoid unnecessary detail"""
+            
+            system_role = "Medical AI assistant. Provide concise, accurate answers."
         
         # Generate response from OpenAI
         response = openai_client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
-                {"role": "system", "content": "Medical AI assistant. Provide concise, accurate answers."},
+                {"role": "system", "content": system_role},
                 {"role": "user", "content": system_prompt}
             ],
             temperature=0.5,
@@ -4500,4 +4736,6 @@ def root():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+    # Use PORT environment variable for deployment platforms (Render, Railway, etc.)
+    port = int(os.getenv("PORT", 8000))
+    uvicorn.run("main:app", host="0.0.0.0", port=port, reload=True)

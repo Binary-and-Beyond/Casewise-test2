@@ -18,7 +18,7 @@ export function CaseSelectionOptions({
       <div
         className={`bg-white border border-gray-200 rounded-lg p-4 ${
           disabled
-            ? "opacity-50 cursor-not-allowed"
+            ? "opacity-50"
             : "hover:shadow-sm cursor-pointer"
         }`}
         onClick={disabled ? undefined : onIdentifyConcepts}
@@ -32,7 +32,7 @@ export function CaseSelectionOptions({
       <div
         className={`bg-white border border-gray-200 rounded-lg p-4 ${
           disabled
-            ? "opacity-50 cursor-not-allowed"
+            ? "opacity-50"
             : "hover:shadow-sm cursor-pointer"
         }`}
         onClick={disabled ? undefined : onExploreCases}
@@ -44,7 +44,7 @@ export function CaseSelectionOptions({
       <div
         className={`bg-white border border-gray-200 rounded-lg p-4 ${
           disabled
-            ? "opacity-50 cursor-not-allowed"
+            ? "opacity-50"
             : "hover:shadow-sm cursor-pointer"
         }`}
         onClick={disabled ? undefined : onGenerateMCQs}

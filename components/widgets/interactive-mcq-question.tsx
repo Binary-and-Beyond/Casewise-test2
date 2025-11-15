@@ -137,7 +137,7 @@ export function InteractiveMCQQuestion({
 
       if (isPreviousAnswer && !option.is_correct) {
         // Show previous wrong answers as disabled
-        return `${baseStyle} bg-red-50 border-red-200 text-red-600 cursor-not-allowed opacity-60`;
+        return `${baseStyle} bg-red-50 border-red-200 text-red-600 opacity-60`;
       } else if (isCurrentSelection) {
         return `${baseStyle} bg-blue-50 border-blue-300`;
       } else {

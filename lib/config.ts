@@ -18,18 +18,14 @@ export const config = {
     return getGoogleClientId();
   },
   get API_BASE_URL() {
-    // Using localhost:8000 for local development
-    // TODO: Uncomment the line below and comment out the hardcoded URL when deploying
-    // const url = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000";
-    const url = "http://localhost:8000";
+    // Use environment variable for production, fallback to localhost for development
+    const url = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000";
     console.log("🔧 Config: API_BASE_URL set to:", url);
     return url;
   },
   get FALLBACK_API_BASE_URL() {
-    // Using localhost:8000 for local development
-    // TODO: Uncomment the line below and comment out the hardcoded URL when deploying
-    // return process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000";
-    return "http://localhost:8000";
+    // Use environment variable for production, fallback to localhost for development
+    return process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000";
   },
 };
 

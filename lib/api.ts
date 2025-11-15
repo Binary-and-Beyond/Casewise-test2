@@ -174,6 +174,16 @@ export interface Concept {
   description: string;
   importance: string;
   case_title?: string;
+  // New structured fields for case breakdown
+  objective?: string;
+  patient_profile?: string;
+  history_of_present_illness?: string;
+  past_medical_history?: string;
+  medications?: string;
+  examination?: string;
+  initial_investigations?: string;
+  case_progression?: string;
+  final_diagnosis?: string;
 }
 
 export interface ConceptResponse {
@@ -1149,7 +1159,8 @@ class ApiService {
   async sendChatMessageToSession(
     chatId: string,
     message: string,
-    documentId?: string
+    documentId?: string,
+    caseTitle?: string
   ): Promise<ChatMessage> {
     return handleRateLimit(async () => {
       const response = await this.fetchWithFallback(
@@ -1159,7 +1170,11 @@ class ApiService {
           headers: this.getHeaders(),
           mode: "cors",
           credentials: "include",
-          body: JSON.stringify({ message, document_id: documentId }),
+          body: JSON.stringify({ 
+            message, 
+            document_id: documentId,
+            case_title: caseTitle 
+          }),
         }
       );
       return this.handleResponse<ChatMessage>(response);

@@ -11,11 +11,22 @@ interface Case {
 interface CasesListProps {
   cases: Case[];
   onCaseSelect: (title: string) => void;
+  onIdentifyConcepts: (title: string) => void;
+  onExploreCase: (title: string) => void;
+  onGenerateMCQs: (title: string) => void;
+  disabled?: boolean;
 }
 
 type SortOption = "all" | "easy" | "moderate" | "hard";
 
-export function CasesList({ cases, onCaseSelect }: CasesListProps) {
+export function CasesList({ 
+  cases, 
+  onCaseSelect,
+  onIdentifyConcepts,
+  onExploreCase,
+  onGenerateMCQs,
+  disabled = false
+}: CasesListProps) {
   const [sortBy, setSortBy] = useState<SortOption>("all");
 
   const normalizeDifficulty = (difficulty: string): string => {
@@ -113,6 +124,10 @@ export function CasesList({ cases, onCaseSelect }: CasesListProps) {
               case_={case_}
               index={index}
               onSelect={onCaseSelect}
+              onIdentifyConcepts={onIdentifyConcepts}
+              onExploreCase={onExploreCase}
+              onGenerateMCQs={onGenerateMCQs}
+              disabled={disabled}
             />
           ))}
         </div>
