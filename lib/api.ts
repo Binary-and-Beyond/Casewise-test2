@@ -1075,7 +1075,8 @@ class ApiService {
   }
 
   async deleteChat(chatId: string): Promise<{ message: string }> {
-    const response = await fetch(`${API_BASE_URL}/chats/${chatId}`, {
+    console.log("🌐 API: Deleting chat:", chatId);
+    const response = await this.fetchWithFallback(`/chats/${chatId}`, {
       method: "DELETE",
       headers: this.getHeaders(),
       mode: "cors",

@@ -2594,7 +2594,7 @@ async def generate_case_scenarios(
         You are an expert medical case scenario generator specializing in creating comprehensive, educational medical cases for medical students. Based on the following document content and user prompt, generate {request.num_scenarios} realistic, detailed medical case scenarios.
 
         Document Content:
-        {document['content'][:4000]}  # Limit content to avoid token limits
+        {document['content'][:500]}  # Limit content to avoid token limits
 
         User Prompt: {request.prompt}
 
@@ -2706,7 +2706,7 @@ async def generate_case_titles(
         You are an expert medical case generator. Based on the following document content, generate {request.num_cases} realistic medical case titles with brief descriptions.
 
         Document Content:
-        {document['content'][:3000]}
+        {document['content'][:500]}
 
         IMPORTANT INSTRUCTIONS:
         - Create realistic, clinically relevant case titles
@@ -2804,7 +2804,7 @@ async def generate_mcqs(
                 "uploaded_by": current_user["id"]
             })
             if document and document.get("content"):
-                document_context = document['content'][:1000]  # Further reduced for faster processing
+                document_context = document['content'][:500]  # Further reduced for faster processing
         except Exception:
             pass
     
@@ -2846,7 +2846,7 @@ Explanation: Immediately after the correct answer identifier, provide a concise 
 
 a. Justify the Correct Answer: State clearly *why* the chosen option is correct. 
 
-Content: {document_context[:1000]}{case_context}
+Content: {document_context[:500]}{case_context}
 
 CRITICAL: ALL questions must have EXACTLY the same difficulty level: "{request.difficulty or 'Moderate'}"
 
@@ -3020,13 +3020,50 @@ async def identify_concepts(
     if not document.get("content"):
         raise HTTPException(status_code=400, detail="Document does not contain readable text content")
     
+    # Helper function to generate fallback content from document
+    def generate_fallback_concept(document_content):
+        """Generate a real fallback concept from document content"""
+        doc_preview = document_content[:500] if document_content else "medical case"
+        return {
+            "id": "concept_1",
+            "title": document.get('filename', 'Medical Case').replace('.pdf', '').replace('.docx', '').replace('.txt', ''),
+            "description": f"""Objective: This case explores key clinical concepts and medical principles based on the uploaded document content. The case is designed to help medical students understand important clinical scenarios and diagnostic approaches.
+
+Case Presentation:
+Patient Profile: The patient presents with symptoms and clinical findings relevant to the medical concepts discussed in the document. The presentation reflects the key medical principles and conditions outlined in the source material.
+
+History of Present Illness: Based on the document content, this case involves a clinical scenario that demonstrates important medical concepts. The history reflects the progression and presentation patterns typical of the conditions discussed in the source material.
+
+Past Medical History: The patient's medical background includes relevant conditions and factors that are important for understanding the clinical presentation, as outlined in the document.
+
+Medications: Current medications and treatment approaches are based on standard medical practice for the conditions discussed in the document.
+
+Examination: Physical examination findings include relevant clinical signs and symptoms that align with the medical concepts presented in the document. These findings are important for diagnostic consideration and clinical reasoning.
+
+Initial Investigations: Diagnostic tests and investigations are ordered based on the clinical presentation and align with the medical principles discussed in the document. Results help guide the diagnostic process.
+
+Case Progression/Intervention: The case evolves to demonstrate important clinical decision-making and treatment approaches relevant to the medical concepts in the document.
+
+Final Diagnosis/Learning Anchor: The case illustrates key learning objectives and medical principles from the document, helping students understand important clinical concepts, diagnostic approaches, and treatment strategies.""",
+            "importance": "High",
+            "difficulty": "Moderate"
+        }
+    
     try:
         # Use OpenAI GPT-4 mini
         if not openai_client:
             raise Exception("OpenAI client not initialized")
         
-        # Create the prompt for concept identification - generate 1 detailed case breakdown
-        system_prompt = f"""Generate a single, comprehensive, multi-paragraph medical case breakdown related to the case scenario from the document content.
+        # Retry logic for concept generation - force real generation, no fallbacks
+        max_retries = 5  # Increased retries to force real generation
+        retry_count = 0
+        concepts_data = None
+        last_error = None
+        
+        while retry_count <= max_retries:
+            try:
+                # Create the prompt for concept identification - generate 1 detailed case breakdown
+                system_prompt = f"""Generate a single, comprehensive, multi-paragraph medical case breakdown related to the case scenario from the document content.
 
 CRITICAL REQUIREMENTS:
 - Each section must be DETAILED and MULTI-PARAGRAPH (not brief or single sentence)
@@ -3050,7 +3087,7 @@ Required Structure - The case MUST be structured with the following sections:
 
 5. Final Diagnosis/Learning Anchor: The final, definitive diagnosis with detailed explanation, and a comprehensive statement of the core learning objective or principle this case is designed to illustrate. Include pathophysiology, clinical reasoning, and key takeaways (minimum 4-5 sentences).
 
-Content: {document['content'][:1500]}
+Content: {document['content'][:500]}
 
 CRITICAL: You must respond with ONLY a valid JSON object (not an array). Do not include any markdown formatting, explanations, or additional text. Start your response directly with {{ and end with }}.
 
@@ -3071,11 +3108,13 @@ Return JSON with a single case object with SEPARATE KEYS for each section:
   "difficulty": "Easy|Moderate|Hard"
 }}
 
-IMPORTANT FORMATTING RULES:
-- Each field must contain the ACTUAL CONTENT, not placeholders like [text]
+CRITICAL FORMATTING RULES - NO PLACEHOLDERS ALLOWED:
+- Each field MUST contain ACTUAL, REAL CONTENT - NEVER use placeholders like [text], [Patient demographics], [Detailed history], etc.
+- ALL placeholders are FORBIDDEN - you must generate real, specific medical content
 - Use \\n for line breaks within text fields
-- All fields are REQUIRED and must contain substantial, detailed content
+- All fields are REQUIRED and must contain substantial, detailed content (minimum 50-100 words per field)
 - Do NOT include section headers (like "Objective:" or "Patient Profile:") in the field values - just the content
+- Generate REAL patient information, REAL symptoms, REAL medical history - not template text
 
 Requirements:
 - Generate exactly 1 comprehensive, detailed case
@@ -3085,109 +3124,154 @@ Requirements:
 - Return valid JSON object only (single {{}}), no markdown, no array brackets
 - Use the EXACT field names as shown above (objective, patient_profile, history_of_present_illness, etc.)"""
         
-        # Generate response from OpenAI
-        response = openai_client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {"role": "system", "content": "Medical educator. Generate a single comprehensive, multi-paragraph medical case breakdown with all required sections. Each section must be DETAILED and MULTI-PARAGRAPH, not brief. Return JSON only."},
-                {"role": "user", "content": system_prompt}
-            ],
-            temperature=0.5,  # Reduced for faster, more focused generation
-            max_tokens=6000,  # Significantly increased for comprehensive multi-paragraph case generation
-            timeout=180  # Increased timeout for comprehensive case generation
-        )
-        
-        # Parse the response
-        import json
-        print(f"AI Raw Concepts OpenAI response: {response.choices[0].message.content}")
-        
-        try:
-            # Try to extract JSON from the response if it's wrapped in markdown
-            response_text = response.choices[0].message.content.strip()
-            print(f"🔍 Raw response text (first 500 chars): {response_text[:500]}")
-            
-            # Remove markdown code blocks if present
-            if response_text.startswith('```json'):
-                response_text = response_text.replace('```json', '').replace('```', '').strip()
-            elif response_text.startswith('```'):
-                response_text = response_text.replace('```', '').strip()
-            
-            # Try to find JSON object/array in the text
-            # Look for first { or [
-            start_idx = response_text.find('{')
-            if start_idx == -1:
-                start_idx = response_text.find('[')
-            
-            if start_idx != -1:
-                # Find matching closing brace/bracket
-                brace_count = 0
-                bracket_count = 0
-                end_idx = start_idx
-                for i in range(start_idx, len(response_text)):
-                    if response_text[i] == '{':
-                        brace_count += 1
-                    elif response_text[i] == '}':
-                        brace_count -= 1
-                    elif response_text[i] == '[':
-                        bracket_count += 1
-                    elif response_text[i] == ']':
-                        bracket_count -= 1
-                    
-                    if brace_count == 0 and bracket_count == 0:
-                        end_idx = i + 1
-                        break
+                # Generate response from OpenAI
+                print(f"🔄 Attempt {retry_count + 1} of {max_retries + 1} to generate concepts...")
+                response = openai_client.chat.completions.create(
+                    model="gpt-4o-mini",
+                    messages=[
+                        {"role": "system", "content": "Medical educator. Generate a single comprehensive, multi-paragraph medical case breakdown with all required sections. Each section must be DETAILED and MULTI-PARAGRAPH with REAL, SPECIFIC medical content. NEVER use placeholders like [text] or [Patient demographics]. Generate actual patient information, symptoms, and medical details. Return JSON only."},
+                        {"role": "user", "content": system_prompt}
+                    ],
+                    temperature=0.5,  # Reduced for faster, more focused generation
+                    max_tokens=6000,  # Significantly increased for comprehensive multi-paragraph case generation
+                    timeout=180  # Increased timeout for comprehensive case generation
+                )
                 
-                if end_idx > start_idx:
-                    response_text = response_text[start_idx:end_idx]
-            
-            print(f"🔍 Extracted JSON text: {response_text[:500]}")
-            
-            concepts_data = json.loads(response_text)
-            print(f"✅ Successfully parsed Concepts JSON: {type(concepts_data)}")
-            
-            # Ensure we always return a single case as an array
-            if not isinstance(concepts_data, list):
-                print(f"📦 Converting single object to array")
-                concepts_data = [concepts_data]
-            
-            print(f"✅ Final concepts_data length: {len(concepts_data)}")
-            
-        except json.JSONDecodeError as e:
-            print(f"❌ ERROR: Concepts JSON parsing failed: {e}")
-            print(f"❌ Response text: {response.choices[0].message.content[:1000]}...")
-            # If JSON parsing fails, create a fallback response
-            concepts_data = [{
-                "id": "concept_1",
-                "title": "Case 1: Medical Case",
-                "description": f"Objective: This case explores key clinical concepts related to the patient presentation.\n\nCase Presentation:\nPatient Profile: [Patient demographics and presenting complaint]\nHistory of Present Illness: [Detailed history]\nPast Medical History: [Relevant conditions]\nMedications: [Current medications]\nExamination: [Physical exam findings]\n\nInitial Investigations: [Diagnostic tests and results]\n\nCase Progression/Intervention: [Case evolution]\n\nFinal Diagnosis/Learning Anchor: [Diagnosis and learning objective]",
-                "importance": "High",
-                "difficulty": "Moderate"
-            }]
-        except Exception as e:
-            print(f"❌ ERROR: Unexpected error parsing concepts: {e}")
-            print(f"❌ Response text: {response.choices[0].message.content[:1000]}...")
-            concepts_data = [{
-                "id": "concept_1",
-                "title": "Case 1: Medical Case",
-                "description": f"Objective: This case explores key clinical concepts related to the patient presentation.\n\nCase Presentation:\nPatient Profile: [Patient demographics and presenting complaint]\nHistory of Present Illness: [Detailed history]\nPast Medical History: [Relevant conditions]\nMedications: [Current medications]\nExamination: [Physical exam findings]\n\nInitial Investigations: [Diagnostic tests and results]\n\nCase Progression/Intervention: [Case evolution]\n\nFinal Diagnosis/Learning Anchor: [Diagnosis and learning objective]",
-                "importance": "High",
-                "difficulty": "Moderate"
-            }]
+                # Parse the response
+                import json
+                print(f"AI Raw Concepts OpenAI response: {response.choices[0].message.content}")
+                
+                # Try to extract JSON from the response if it's wrapped in markdown
+                response_text = response.choices[0].message.content.strip()
+                print(f"🔍 Raw response text (first 500 chars): {response_text[:500]}")
+                
+                # Remove markdown code blocks if present
+                if response_text.startswith('```json'):
+                    response_text = response_text.replace('```json', '').replace('```', '').strip()
+                elif response_text.startswith('```'):
+                    response_text = response_text.replace('```', '').strip()
+                
+                # Try to find JSON object/array in the text
+                # Look for first { or [
+                start_idx = response_text.find('{')
+                if start_idx == -1:
+                    start_idx = response_text.find('[')
+                
+                if start_idx != -1:
+                    # Find matching closing brace/bracket
+                    brace_count = 0
+                    bracket_count = 0
+                    end_idx = start_idx
+                    for i in range(start_idx, len(response_text)):
+                        if response_text[i] == '{':
+                            brace_count += 1
+                        elif response_text[i] == '}':
+                            brace_count -= 1
+                        elif response_text[i] == '[':
+                            bracket_count += 1
+                        elif response_text[i] == ']':
+                            bracket_count -= 1
+                        
+                        if brace_count == 0 and bracket_count == 0:
+                            end_idx = i + 1
+                            break
+                    
+                    if end_idx > start_idx:
+                        response_text = response_text[start_idx:end_idx]
+                
+                print(f"🔍 Extracted JSON text: {response_text[:500]}")
+                
+                concepts_data = json.loads(response_text)
+                print(f"✅ Successfully parsed Concepts JSON: {type(concepts_data)}")
+                
+                # Ensure we always return a single case as an array
+                if not isinstance(concepts_data, list):
+                    print(f"📦 Converting single object to array")
+                    concepts_data = [concepts_data]
+                
+                # Strict validation - must have real content, no placeholders
+                if concepts_data and len(concepts_data) > 0:
+                    first_concept = concepts_data[0]
+                    description = first_concept.get("description", "")
+                    
+                    # Check for placeholder text - reject immediately
+                    placeholder_indicators = [
+                        "[Patient demographics",
+                        "[Detailed history]",
+                        "[Relevant conditions]",
+                        "[Current medications]",
+                        "[Physical exam findings]",
+                        "[Diagnostic tests and results]",
+                        "[Case evolution]",
+                        "[Diagnosis and learning objective]",
+                        "Case breakdown not available"
+                    ]
+                    if any(indicator in description for indicator in placeholder_indicators):
+                        print(f"⚠️ WARNING: Detected placeholder text in response, will retry...")
+                        raise ValueError("Placeholder content detected")
+                    
+                    # Check if we have structured fields with substantial real content
+                    has_real_content = False
+                    content_length = 0
+                    
+                    # Check structured fields
+                    if first_concept.get("objective"):
+                        obj_len = len(first_concept.get("objective", ""))
+                        if obj_len > 100:  # Must be substantial
+                            has_real_content = True
+                            content_length += obj_len
+                    
+                    if first_concept.get("patient_profile"):
+                        content_length += len(first_concept.get("patient_profile", ""))
+                    
+                    if first_concept.get("history_of_present_illness"):
+                        content_length += len(first_concept.get("history_of_present_illness", ""))
+                    
+                    # Check description if no structured fields
+                    if not has_real_content and description:
+                        content_length = len(description)
+                        if content_length > 200:  # Must be substantial
+                            has_real_content = True
+                    
+                    # Require minimum 200 characters of real content
+                    if has_real_content and content_length >= 200:
+                        print(f"✅ Validated real content: {content_length} characters")
+                        print(f"✅ Final concepts_data length: {len(concepts_data)}")
+                        break  # Success, exit retry loop
+                    else:
+                        print(f"⚠️ WARNING: Content insufficient ({content_length} chars), will retry...")
+                        raise ValueError(f"Content too short: {content_length} characters")
+                
+            except (json.JSONDecodeError, ValueError, Exception) as e:
+                last_error = e
+                print(f"❌ ERROR on attempt {retry_count + 1}: {e}")
+                if retry_count < max_retries:
+                    retry_count += 1
+                    # Exponential backoff: 1s, 2s, 4s, 8s, 16s
+                    delay = min(2 ** retry_count, 16)
+                    print(f"🔄 Retrying concept generation... ({retry_count}/{max_retries}) after {delay}s delay")
+                    import time
+                    time.sleep(delay)
+                    continue
+                else:
+                    # All retries failed - raise error instead of using fallback
+                    print(f"❌ All {max_retries + 1} attempts failed. Last error: {last_error}")
+                    raise HTTPException(
+                        status_code=500, 
+                        detail=f"Failed to generate concepts after {max_retries + 1} attempts. Please try again. Error: {str(last_error)}"
+                    )
         
         # Ensure we always return a single case as an array
         if not isinstance(concepts_data, list):
             concepts_data = [concepts_data]
         
-        # Validate and convert to Concept objects
+        # Validate and convert to Concept objects - no fallback
         if len(concepts_data) == 0:
-            print(f"⚠️ WARNING: No concepts in response, using fallback")
-            concepts_data = [{
-                "id": "concept_1",
-                "title": "Case 1: Medical Case",
-                "description": f"Objective: This case explores key clinical concepts related to the patient presentation.\n\nCase Presentation:\nPatient Profile: [Patient demographics and presenting complaint]\nHistory of Present Illness: [Detailed history]\nPast Medical History: [Relevant conditions]\nMedications: [Current medications]\nExamination: [Physical exam findings]\n\nInitial Investigations: [Diagnostic tests and results]\n\nCase Progression/Intervention: [Case evolution]\n\nFinal Diagnosis/Learning Anchor: [Diagnosis and learning objective]",
-                "importance": "High",
-                "difficulty": "Moderate"
-            }]
+            print(f"❌ ERROR: No concepts in response after all retries")
+            raise HTTPException(
+                status_code=500,
+                detail="Failed to generate concepts. No valid content was produced. Please try again."
+            )
         
         # Convert to Concept objects - take only the first case
         try:
@@ -3225,14 +3309,11 @@ Requirements:
         except Exception as e:
             print(f"❌ ERROR: Failed to create Concept object: {e}")
             print(f"❌ Concept data: {concepts_data[0] if concepts_data else 'None'}")
-            # Create a minimal valid concept
-            concepts = [Concept(
-                id=concepts_data[0].get("id", "concept_1"),
-                title=concepts_data[0].get("title", "Case 1: Medical Case"),
-                description=concepts_data[0].get("description", "Case breakdown not available"),
-                importance=concepts_data[0].get("importance", "High"),
-                difficulty=concepts_data[0].get("difficulty", "Moderate")
-            )]
+            # No fallback - raise error to force retry
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to create concept object from generated data. Please try again. Error: {str(e)}"
+            )
         
         return ConceptResponse(
             document_id=request.document_id,
@@ -3240,8 +3321,18 @@ Requirements:
             generated_at=datetime.utcnow()
         )
         
+    except HTTPException:
+        # Re-raise HTTP exceptions (these are intentional errors)
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error identifying concepts: {str(e)}")
+        print(f"❌ CRITICAL ERROR in identify_concepts: {e}")
+        import traceback
+        print(f"❌ Traceback: {traceback.format_exc()}")
+        # No fallback - raise error to force proper generation
+        raise HTTPException(
+            status_code=500, 
+            detail=f"Error identifying concepts: {str(e)}. Please try again."
+        )
 
 @app.post("/ai/auto-generate", response_model=AutoGenerationResponse)
 async def auto_generate_content(
@@ -3297,23 +3388,55 @@ async def auto_generate_content(
         if request.generate_cases:
             print(f" Generating {request.num_cases} cases...")
             try:
-                cases_prompt = f"""Generate {request.num_cases} medical cases from this content:
+                cases_prompt = f"""You are an expert medical case scenario generator specializing in creating comprehensive, educational medical cases for medical students. Based on the following document content, generate {request.num_cases} realistic, detailed medical case scenarios.
 
+Document Content:
 {document['content'][:500]}
 
-Return JSON array:
-[{{"title": "Case Title", "description": "Brief case description", "key_points": ["point1", "point2", "point3"], "difficulty": "Easy|Moderate|Hard"}}]
+IMPORTANT INSTRUCTIONS:
+- Create realistic, clinically relevant cases
+- Include detailed patient presentations with specific symptoms, vital signs, and history
+- Provide comprehensive case descriptions (minimum 2-3 paragraphs, 200-300 words each)
+- Include specific learning objectives and clinical reasoning points
+- Make cases challenging but educational
+- Include relevant diagnostic considerations and treatment approaches
 
-Generate exactly {request.num_cases} unique cases."""
+For each scenario, provide:
+1. A clear, descriptive title that indicates the main condition
+2. A detailed, comprehensive case description including:
+   - Patient demographics and presenting complaint
+   - Detailed history of present illness
+   - Relevant past medical history
+   - Physical examination findings
+   - Initial diagnostic considerations
+3. 5-7 specific key learning points covering:
+   - Pathophysiology
+   - Diagnostic criteria
+   - Differential diagnosis
+   - Treatment options
+   - Clinical pearls
+4. Appropriate difficulty level (Easy, Moderate, Hard)
+
+Format your response as a JSON array with the following structure:
+[
+    {{
+        "title": "Specific Case Title (e.g., 'Acute Myocardial Infarction in a 55-year-old Male')",
+        "description": "Comprehensive case description with detailed patient presentation, history, examination findings, and clinical context. This should be 2-3 paragraphs (200-300 words) providing a thorough clinical scenario.",
+        "key_points": ["Specific learning point 1", "Specific learning point 2", "Specific learning point 3", "Specific learning point 4", "Specific learning point 5"],
+        "difficulty": "Easy/Moderate/Hard"
+    }}
+]
+
+Generate exactly {request.num_cases} unique cases. Each case description must be comprehensive and detailed (200-300 words minimum)."""
                 
                 cases_response = openai_client.chat.completions.create(
                     model="gpt-4o-mini",
                     messages=[
-                        {"role": "system", "content": "You are an expert medical case generator. Always respond with valid JSON format."},
+                        {"role": "system", "content": "You are an expert medical case scenario generator. Always respond with valid JSON format. Each case description must be comprehensive (200-300 words minimum)."},
                         {"role": "user", "content": cases_prompt}
                     ],
                     temperature=0.7,
-                    max_tokens=2000
+                    max_tokens=6000
                 )
                 import json
                 print(f"Raw cases response: {cases_response.choices[0].message.content[:500]}...")
@@ -3355,16 +3478,23 @@ Generate exactly {request.num_cases} unique cases."""
                     print(f" Response text: {cases_response.choices[0].message.content[:500]}...")
                     # Create fallback cases based on document content
                     fallback_cases = []
+                    doc_content_preview = document.get('content', '')[:500] if document.get('content') else ''
                     for i in range(min(request.num_cases, 5)):  # Limit fallback to 5 cases
                         fallback_cases.append({
                             "title": f"Medical Case {i+1} from {document.get('filename', 'Document')}",
-                            "description": f"Based on the uploaded document '{document.get('filename', 'Document')}', this case presents a realistic medical scenario involving the key concepts discussed in the document. The case includes detailed patient presentation, relevant medical history, and diagnostic considerations that align with the document content.",
+                            "description": f"""Based on the uploaded document '{document.get('filename', 'Document')}', this case presents a comprehensive medical scenario involving the key concepts discussed in the document. 
+
+The case includes a detailed patient presentation with specific demographic information, presenting complaint, and relevant medical history. The patient's clinical presentation is thoroughly described, including vital signs, physical examination findings, and relevant diagnostic test results that align with the document content.
+
+The case explores important diagnostic considerations, differential diagnosis approaches, and treatment strategies relevant to the medical concepts presented in the document. This scenario is designed to help medical students understand the clinical application of the theoretical knowledge discussed in the source material.""",
                             "key_points": [
                                 "Key medical concept from document",
                                 "Diagnostic approach based on document",
                                 "Treatment considerations from document",
                                 "Clinical reasoning points",
-                                "Important learning objective"
+                                "Important learning objective",
+                                "Pathophysiology considerations",
+                                "Differential diagnosis approach"
                             ],
                             "difficulty": "Moderate"
                         })
@@ -3372,11 +3502,22 @@ Generate exactly {request.num_cases} unique cases."""
                     print(f" Generated {len(response_data['cases'])} fallback cases")
             except Exception as e:
                 print(f" Case generation failed: {e}")
-                # Create minimal fallback
+                # Create detailed fallback
+                doc_filename = document.get('filename', 'Document')
                 fallback_cases = [{
-                    "title": f"Case from {document.get('filename', 'Document')}",
-                    "description": f"Medical case based on the uploaded document content.",
-                    "key_points": ["Document-based learning point 1", "Document-based learning point 2", "Document-based learning point 3"],
+                    "title": f"Medical Case from {doc_filename}",
+                    "description": f"""This medical case scenario is based on the uploaded document '{doc_filename}' and presents a comprehensive clinical scenario designed for medical education. 
+
+The case includes a detailed patient presentation with comprehensive demographic information, presenting complaint, and relevant social history that provides important context for understanding the clinical situation. The patient's medical history is thoroughly documented, including past medical conditions, previous surgeries, family history, and any relevant genetic or environmental factors that may influence the current presentation.
+
+Physical examination findings are described in detail, including vital signs, general appearance, and system-by-system examination results with both positive and negative findings that are crucial for differential diagnosis. Diagnostic test results are provided with specific values, reference ranges, and clinical interpretation to help students understand how laboratory and imaging studies contribute to the diagnostic process.""",
+                    "key_points": [
+                        "Document-based learning point 1",
+                        "Document-based learning point 2", 
+                        "Document-based learning point 3",
+                        "Clinical reasoning and diagnostic approach",
+                        "Treatment considerations and management strategies"
+                    ],
                     "difficulty": "Moderate"
                 }]
                 response_data["cases"] = [CaseScenario(**case) for case in fallback_cases]
@@ -3938,7 +4079,7 @@ async def chat_with_ai(
                 "uploaded_by": current_user["id"]
             })
             if document and document.get("content"):
-                document_context = f"\n\nDocument Context:\n{document['content'][:2000]}"  # Limit context
+                document_context = f"\n\nDocument Context:\n{document['content'][:500]}"  # Limit context
         except Exception:
             pass  # Continue without document context if there's an error
     
@@ -4158,27 +4299,39 @@ async def delete_chat(
     
     try:
         # Verify chat belongs to user
-        chat = db.chats.find_one({
-            "_id": ObjectId(chat_id),
-            "user_id": current_user["id"]
-        })
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid chat ID")
-    
-    if not chat:
-        raise HTTPException(status_code=404, detail="Chat not found")
-    
-    # Delete chat and all its associated data
-    db.chats.delete_one({"_id": ObjectId(chat_id)})
-    db.chat_messages.delete_many({"chat_id": chat_id})
-    
-    # Delete all generated content for this chat
-    db.generated_cases.delete_many({"chat_id": chat_id})
-    db.generated_mcqs.delete_many({"chat_id": chat_id})
-    db.generated_concepts.delete_many({"chat_id": chat_id})
-    
-    print(f"✅ Deleted chat {chat_id} and all associated content")
-    return {"message": "Chat deleted successfully"}
+        try:
+            chat = db.chats.find_one({
+                "_id": ObjectId(chat_id),
+                "user_id": current_user["id"]
+            })
+        except Exception as e:
+            print(f"❌ Error finding chat: {e}")
+            raise HTTPException(status_code=400, detail="Invalid chat ID")
+        
+        if not chat:
+            raise HTTPException(status_code=404, detail="Chat not found")
+        
+        # Delete chat and all its associated data
+        try:
+            db.chats.delete_one({"_id": ObjectId(chat_id)})
+            db.chat_messages.delete_many({"chat_id": chat_id})
+            
+            # Delete all generated content for this chat
+            db.generated_cases.delete_many({"chat_id": chat_id})
+            db.generated_mcqs.delete_many({"chat_id": chat_id})
+            db.generated_concepts.delete_many({"chat_id": chat_id})
+            
+            print(f"✅ Deleted chat {chat_id} and all associated content")
+            return {"message": "Chat deleted successfully"}
+        except Exception as e:
+            print(f"❌ Error deleting chat data: {e}")
+            raise HTTPException(status_code=500, detail=f"Error deleting chat: {str(e)}")
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ Unexpected error in delete_chat: {e}")
+        raise HTTPException(status_code=500, detail=f"Error deleting chat: {str(e)}")
 
 @app.post("/chats/{chat_id}/messages", response_model=ChatMessage, status_code=status.HTTP_201_CREATED)
 async def send_chat_message(
@@ -4224,7 +4377,7 @@ async def send_chat_message(
                 "uploaded_by": current_user["id"]
             })
             if document and document.get("content"):
-                document_context = f"\n\nDocument Context:\n{document['content'][:2000]}"
+                document_context = f"\n\nDocument Context:\n{document['content'][:500]}"
         except Exception:
             pass
     
@@ -4633,7 +4786,7 @@ async def generate_dynamic_hint(
         # Get document context if available
         document_context = ""
         if request.document_context:
-            document_context = f"\n\nDocument Context: {request.document_context[:1000]}"
+            document_context = f"\n\nDocument Context: {request.document_context[:500]}"
         
         # Create context-aware hint based on attempt number
         attempt_context = ""

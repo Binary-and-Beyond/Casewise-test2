@@ -48,7 +48,7 @@ interface SidebarProps {
   activeChat: string;
   handleChatSelect: (chatId: string) => void;
   onCreateNewChat: () => void;
-  onDeleteChat: (chatId: string) => void;
+  onDeleteChat: (chatId: string) => Promise<void> | void;
   onLogout: () => void;
 }
 
@@ -100,8 +100,20 @@ export function Sidebar({
   };
 
   const confirmDelete = (chatId: string) => {
-    onDeleteChat(chatId);
-    setShowDeleteConfirm(null);
+    setShowDeleteConfirm(null); // Close dialog immediately
+    try {
+      const result = onDeleteChat(chatId);
+      // If it returns a promise, handle errors
+      if (result instanceof Promise) {
+        result.catch((error) => {
+          console.error("Error deleting chat:", error);
+          // Error will be shown by parent component
+        });
+      }
+    } catch (error) {
+      console.error("Error deleting chat:", error);
+      // Error will be shown by parent component
+    }
   };
 
   const cancelDelete = () => {

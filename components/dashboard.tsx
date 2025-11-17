@@ -282,7 +282,7 @@ export function Dashboard({}: DashboardProps) {
     return {};
   });
   const [generatedConcepts, setGeneratedConcepts] = useState<
-    Record<string, any[]>  // Can be Concept objects or strings for backward compatibility
+    Record<string, any[]> // Can be Concept objects or strings for backward compatibility
   >(() => {
     if (typeof window !== "undefined") {
       try {
@@ -509,7 +509,7 @@ export function Dashboard({}: DashboardProps) {
             // Use the dedicated identify concepts API instead of autoGenerateContent
             const conceptsResponse = await apiService.identifyConcepts(
               currentDocument.id,
-              1  // Generate single case breakdown
+              1 // Generate single case breakdown
             );
 
             console.log("📊 Concepts response:", conceptsResponse);
@@ -631,11 +631,17 @@ export function Dashboard({}: DashboardProps) {
 
       // Set the first chat as active if no active chat is set
       // But only if we're on the main view and not explicitly trying to show the welcome screen
-      const showWelcomeScreen = typeof window !== "undefined" && 
+      const showWelcomeScreen =
+        typeof window !== "undefined" &&
         localStorage.getItem("show_welcome_screen") === "true";
       const isMainView = currentView === "main";
-      
-      if (validChats.length > 0 && !activeChat && !showWelcomeScreen && isMainView) {
+
+      if (
+        validChats.length > 0 &&
+        !activeChat &&
+        !showWelcomeScreen &&
+        isMainView
+      ) {
         const newActiveChat = validChats[0].id;
         console.log("🎯 Setting first chat as active:", newActiveChat);
         setActiveChat(newActiveChat);
@@ -648,7 +654,9 @@ export function Dashboard({}: DashboardProps) {
         // Clear the flag after we've prevented auto-selection and we're on main view
         if (typeof window !== "undefined") {
           // Keep the flag until we're sure we're on main view
-          console.log("🎯 Welcome screen flag is set, preventing auto-selection");
+          console.log(
+            "🎯 Welcome screen flag is set, preventing auto-selection"
+          );
         }
       } else if (validChats.length > 0 && activeChat) {
         // Verify that the active chat still exists in the loaded chats
@@ -1401,18 +1409,18 @@ export function Dashboard({}: DashboardProps) {
     generatedConcepts[selectedCase].length > 0
       ? generatedConcepts[selectedCase]
       : [];
-  
+
   // Ensure concepts are Concept objects (handle both old string format and new object format)
   const concepts = conceptsRaw.map((item: any) => {
-    if (typeof item === 'string') {
+    if (typeof item === "string") {
       // Old format: string, convert to Concept object
-      const parts = item.split(':');
+      const parts = item.split(":");
       return {
         id: `concept_${Math.random()}`,
-        title: parts[0] || 'Concept',
-        description: parts.slice(1).join(':').trim() || item,
-        importance: 'High',
-        difficulty: 'Moderate'
+        title: parts[0] || "Concept",
+        description: parts.slice(1).join(":").trim() || item,
+        importance: "High",
+        difficulty: "Moderate",
       };
     }
     // New format: already a Concept object
@@ -1959,8 +1967,7 @@ export function Dashboard({}: DashboardProps) {
       case "generate-mcqs":
         return {
           label: "Back to Cases",
-          onClick: () =>
-            handleNavigationAttempt(() => navigateToView("main")),
+          onClick: () => handleNavigationAttempt(() => navigateToView("main")),
         };
       case "explore-cases":
         return {
@@ -2076,7 +2083,9 @@ export function Dashboard({}: DashboardProps) {
   const generateMCQsFromDocument = async (retryCount = 0) => {
     // Prevent multiple simultaneous calls
     if (isGeneratingMCQs === selectedCase && retryCount === 0) {
-      console.log("⏳ MCQ generation already in progress for this case, skipping...");
+      console.log(
+        "⏳ MCQ generation already in progress for this case, skipping..."
+      );
       return;
     }
 
@@ -2115,7 +2124,7 @@ export function Dashboard({}: DashboardProps) {
 
     // Safety timeout: clear loading state after 2 minutes if still stuck
     let safetyTimeout: NodeJS.Timeout | undefined;
-    
+
     try {
       // Don't set isUploading - it blocks the whole page. Only use isGeneratingMCQs for MCQ-specific loading
       setUploadError("");
@@ -2131,7 +2140,9 @@ export function Dashboard({}: DashboardProps) {
         safetyTimeout = setTimeout(() => {
           console.warn("⚠️ MCQ generation timeout - clearing stuck state");
           setIsGeneratingMCQs(null);
-          setUploadError("MCQ generation is taking longer than expected. Please try again.");
+          setUploadError(
+            "MCQ generation is taking longer than expected. Please try again."
+          );
         }, 120000); // 2 minutes safety timeout
       }
 
@@ -2358,7 +2369,7 @@ export function Dashboard({}: DashboardProps) {
 
     // Safety timeout: clear loading state after 2 minutes if still stuck
     let safetyTimeout: NodeJS.Timeout | undefined;
-    
+
     try {
       setIsUploading(true);
       setIsGeneratingConcepts(true);
@@ -2370,7 +2381,9 @@ export function Dashboard({}: DashboardProps) {
           console.warn("⚠️ Concept generation timeout - clearing stuck state");
           setIsGeneratingConcepts(false);
           setIsUploading(false);
-          setUploadError("Concept generation is taking longer than expected. Please try again.");
+          setUploadError(
+            "Concept generation is taking longer than expected. Please try again."
+          );
         }, 120000); // 2 minutes safety timeout
       }
 
@@ -2524,7 +2537,7 @@ export function Dashboard({}: DashboardProps) {
 
     try {
       // Step 1: Generate cases only (fastest)
-      setAutoLoadingProgress("🚀 Generating medical cases...");
+      setAutoLoadingProgress("🚀 Generating cases...");
       console.log("🚀 Step 1: Generating cases only...");
       console.log("📄 Document details:", {
         id: currentDocument.id,
@@ -2988,7 +3001,7 @@ export function Dashboard({}: DashboardProps) {
   const getCaseDifficulty = (caseTitle: string): string => {
     const caseData = generatedCases.find((c) => c.title === caseTitle);
     const difficulty = caseData?.difficulty || "Moderate";
-    
+
     // Normalize difficulty to ensure proper capitalization (Easy, Moderate, Hard)
     const normalized = difficulty.toLowerCase();
     if (normalized === "easy") return "Easy";
@@ -3148,11 +3161,12 @@ export function Dashboard({}: DashboardProps) {
 
   const renderMainDashboard = () => {
     const currentFile = getCurrentChatFile();
-    
+
     // Check if we should show welcome screen (no active chat and flag is set)
-    const showWelcomeScreen = typeof window !== "undefined" && 
+    const showWelcomeScreen =
+      typeof window !== "undefined" &&
       localStorage.getItem("show_welcome_screen") === "true";
-    
+
     // If welcome screen flag is set and we have no active chat, clear the flag
     // This ensures the welcome screen stays visible
     if (showWelcomeScreen && !activeChat) {
@@ -3292,7 +3306,7 @@ export function Dashboard({}: DashboardProps) {
             <div className="mb-6">
               <div className="flex items-center justify-between mb-4">
                 <h2 className="text-xl font-semibold text-gray-900">
-                  Generated Medical Cases
+                  Generated Cases
                 </h2>
               </div>
               <div className="mb-6">
@@ -3320,29 +3334,33 @@ export function Dashboard({}: DashboardProps) {
               onGenerateMCQs={async (title) => {
                 // Set loading state IMMEDIATELY for instant feedback
                 if (isGeneratingMCQs === title) {
-                  console.log(`⏳ Already generating MCQs for case: ${title}, skipping`);
+                  console.log(
+                    `⏳ Already generating MCQs for case: ${title}, skipping`
+                  );
                   return;
                 }
-                
+
                 if (isGeneratingMCQs || isUploading) {
                   console.log(`⏳ Another operation in progress, skipping`);
                   return;
                 }
-                
+
                 // Set selected case and loading state immediately
                 setSelectedCaseWithPersistence(title);
                 setIsGeneratingMCQs(title);
                 setAutoLoadingProgress(`📝 Generating MCQs for: ${title}...`);
-                
+
                 // Navigate to MCQ view immediately for better UX (non-blocking)
                 // Use setTimeout to make navigation non-blocking and prevent page freeze
                 setTimeout(() => {
                   setCurrentViewWithPersistence("generate-mcqs");
                 }, 0);
-                
+
                 // Generate MCQs on-demand for the selected case
                 if (!mcqQuestions[title] || mcqQuestions[title].length === 0) {
-                  console.log(`🎯 Generating MCQs on-demand for case: ${title}`);
+                  console.log(
+                    `🎯 Generating MCQs on-demand for case: ${title}`
+                  );
 
                   try {
                     const currentDocument = getCurrentChatDocument();
@@ -3416,7 +3434,9 @@ export function Dashboard({}: DashboardProps) {
                   setCurrentViewWithPersistence("generate-mcqs");
                 }
               }}
-              disabled={isGeneratingMCQs !== null || isGeneratingConcepts || isUploading}
+              disabled={
+                isGeneratingMCQs !== null || isGeneratingConcepts || isUploading
+              }
             />
           </div>
         )}
@@ -3482,7 +3502,9 @@ export function Dashboard({}: DashboardProps) {
               setCurrentViewWithPersistence("explore-cases");
             }
           }}
-          disabled={isGeneratingMCQs !== null || isGeneratingConcepts || isUploading}
+          disabled={
+            isGeneratingMCQs !== null || isGeneratingConcepts || isUploading
+          }
         />
       </div>
     );
@@ -3520,9 +3542,7 @@ export function Dashboard({}: DashboardProps) {
               <p
                 className="text-sm font-medium text-gray-900 cursor-pointer hover:text-blue-600"
                 onClick={() =>
-                  handleNavigationAttempt(() =>
-                    navigateToView("main")
-                  )
+                  handleNavigationAttempt(() => navigateToView("main"))
                 }
               >
                 Cases
@@ -3716,7 +3736,9 @@ export function Dashboard({}: DashboardProps) {
                 setCurrentViewWithPersistence("identify-concepts");
               }
             }}
-            disabled={isGeneratingMCQs !== null || isGeneratingConcepts || isUploading}
+            disabled={
+              isGeneratingMCQs !== null || isGeneratingConcepts || isUploading
+            }
           />
         </div>
       </div>
@@ -3732,33 +3754,50 @@ export function Dashboard({}: DashboardProps) {
 
     // Get the single case breakdown
     const caseBreakdown = concepts && concepts.length > 0 ? concepts[0] : null;
-    
+
     // Check if we have new structured format (separate fields) or old format (description to parse)
-    const hasStructuredFields = caseBreakdown && (
-      caseBreakdown.objective || 
-      caseBreakdown.patient_profile || 
-      caseBreakdown.history_of_present_illness
-    );
-    
+    const hasStructuredFields =
+      caseBreakdown &&
+      (caseBreakdown.objective ||
+        caseBreakdown.patient_profile ||
+        caseBreakdown.history_of_present_illness);
+
     // Build sections from structured fields if available, otherwise parse description
     const caseSections: Record<string, string> = {};
     if (hasStructuredFields && caseBreakdown) {
       // New structured format - use fields directly
-      if (caseBreakdown.objective) caseSections['Objective'] = caseBreakdown.objective;
-      if (caseBreakdown.patient_profile) caseSections['Patient Profile'] = caseBreakdown.patient_profile;
-      if (caseBreakdown.history_of_present_illness) caseSections['History of Present Illness'] = caseBreakdown.history_of_present_illness;
-      if (caseBreakdown.past_medical_history) caseSections['Past Medical History'] = caseBreakdown.past_medical_history;
-      if (caseBreakdown.medications) caseSections['Medications'] = caseBreakdown.medications;
-      if (caseBreakdown.examination) caseSections['Examination'] = caseBreakdown.examination;
-      if (caseBreakdown.initial_investigations) caseSections['Initial Investigations'] = caseBreakdown.initial_investigations;
-      if (caseBreakdown.case_progression) caseSections['Case Progression/Intervention'] = caseBreakdown.case_progression;
-      if (caseBreakdown.final_diagnosis) caseSections['Final Diagnosis/Learning Anchor'] = caseBreakdown.final_diagnosis;
-      
-      console.log("✅ Using structured fields format:", Object.keys(caseSections));
+      if (caseBreakdown.objective)
+        caseSections["Objective"] = caseBreakdown.objective;
+      if (caseBreakdown.patient_profile)
+        caseSections["Patient Profile"] = caseBreakdown.patient_profile;
+      if (caseBreakdown.history_of_present_illness)
+        caseSections["History of Present Illness"] =
+          caseBreakdown.history_of_present_illness;
+      if (caseBreakdown.past_medical_history)
+        caseSections["Past Medical History"] =
+          caseBreakdown.past_medical_history;
+      if (caseBreakdown.medications)
+        caseSections["Medications"] = caseBreakdown.medications;
+      if (caseBreakdown.examination)
+        caseSections["Examination"] = caseBreakdown.examination;
+      if (caseBreakdown.initial_investigations)
+        caseSections["Initial Investigations"] =
+          caseBreakdown.initial_investigations;
+      if (caseBreakdown.case_progression)
+        caseSections["Case Progression/Intervention"] =
+          caseBreakdown.case_progression;
+      if (caseBreakdown.final_diagnosis)
+        caseSections["Final Diagnosis/Learning Anchor"] =
+          caseBreakdown.final_diagnosis;
+
+      console.log(
+        "✅ Using structured fields format:",
+        Object.keys(caseSections)
+      );
     }
-    
+
     const caseDescription = caseBreakdown?.description || "";
-    
+
     console.log("🔍 Identify Concepts Debug:", {
       conceptsLength: concepts?.length,
       caseBreakdown: caseBreakdown,
@@ -3766,7 +3805,7 @@ export function Dashboard({}: DashboardProps) {
       hasDescription: !!caseDescription,
       descriptionLength: caseDescription.length,
       selectedCase,
-      sectionsFound: Object.keys(caseSections)
+      sectionsFound: Object.keys(caseSections),
     });
 
     // Parse the description into sections - only if we don't have structured fields
@@ -3777,93 +3816,128 @@ export function Dashboard({}: DashboardProps) {
       }
       const sections: Record<string, string> = {};
       if (!description) return sections;
-      
+
       // Split by double newlines first to handle paragraph breaks
-      const paragraphs = description.split(/\n\s*\n/).filter(p => p.trim());
-      
-      let currentSection = '';
+      const paragraphs = description.split(/\n\s*\n/).filter((p) => p.trim());
+
+      let currentSection = "";
       let currentContent: string[] = [];
       let inCasePresentation = false;
-      
+
       for (let i = 0; i < paragraphs.length; i++) {
         const paragraph = paragraphs[i].trim();
-        const lines = paragraph.split('\n').map(l => l.trim()).filter(l => l);
-        const firstLine = lines[0] || '';
-        
+        const lines = paragraph
+          .split("\n")
+          .map((l) => l.trim())
+          .filter((l) => l);
+        const firstLine = lines[0] || "";
+
         // Check for main sections (Objective, Case Presentation, Initial Investigations, etc.)
-        const mainSectionMatch = firstLine.match(/^(Objective|Case Presentation|Initial Investigations|Case Progression\/Intervention|Case Progression|Final Diagnosis\/Learning Anchor|Final Diagnosis):\s*(.*)/i);
+        const mainSectionMatch = firstLine.match(
+          /^(Objective|Case Presentation|Initial Investigations|Case Progression\/Intervention|Case Progression|Final Diagnosis\/Learning Anchor|Final Diagnosis):\s*(.*)/i
+        );
         if (mainSectionMatch) {
           // Save previous section
           if (currentSection && currentContent.length > 0) {
-            sections[currentSection] = currentContent.join('\n').trim();
+            sections[currentSection] = currentContent.join("\n").trim();
           }
           currentSection = mainSectionMatch[1];
-          const remainingText = mainSectionMatch[2] ? mainSectionMatch[2].trim() : '';
-          const restOfParagraph = lines.slice(1).join('\n');
-          currentContent = remainingText ? [remainingText, restOfParagraph].filter(Boolean) : restOfParagraph ? [restOfParagraph] : [];
-          inCasePresentation = currentSection === 'Case Presentation';
+          const remainingText = mainSectionMatch[2]
+            ? mainSectionMatch[2].trim()
+            : "";
+          const restOfParagraph = lines.slice(1).join("\n");
+          currentContent = remainingText
+            ? [remainingText, restOfParagraph].filter(Boolean)
+            : restOfParagraph
+            ? [restOfParagraph]
+            : [];
+          inCasePresentation = currentSection === "Case Presentation";
           continue;
         }
-        
+
         // Check if entire paragraph starts with a section header (even if on same line)
-        const sectionHeaderMatch = paragraph.match(/^(Objective|Case Presentation|Initial Investigations|Case Progression\/Intervention|Case Progression|Final Diagnosis\/Learning Anchor|Final Diagnosis):\s*(.*)/is);
+        const sectionHeaderMatch = paragraph.match(
+          /^(Objective|Case Presentation|Initial Investigations|Case Progression\/Intervention|Case Progression|Final Diagnosis\/Learning Anchor|Final Diagnosis):\s*(.*)/is
+        );
         if (sectionHeaderMatch) {
           if (currentSection && currentContent.length > 0) {
-            sections[currentSection] = currentContent.join('\n').trim();
+            sections[currentSection] = currentContent.join("\n").trim();
           }
           currentSection = sectionHeaderMatch[1];
-          currentContent = sectionHeaderMatch[2] ? [sectionHeaderMatch[2].trim()] : [];
-          inCasePresentation = currentSection === 'Case Presentation';
+          currentContent = sectionHeaderMatch[2]
+            ? [sectionHeaderMatch[2].trim()]
+            : [];
+          inCasePresentation = currentSection === "Case Presentation";
           continue;
         }
-        
+
         // Check for Case Presentation subsections
-        const subsectionMatch = firstLine.match(/^(Patient Profile|History of Present Illness|Past Medical History|Medications|Examination):\s*(.*)/i);
+        const subsectionMatch = firstLine.match(
+          /^(Patient Profile|History of Present Illness|Past Medical History|Medications|Examination):\s*(.*)/i
+        );
         if (subsectionMatch) {
           if (inCasePresentation) {
             // Save previous subsection if exists
             if (currentSection && currentContent.length > 0) {
-              sections[currentSection] = currentContent.join('\n').trim();
+              sections[currentSection] = currentContent.join("\n").trim();
             }
             // Start new subsection
             currentSection = subsectionMatch[1];
-            const remainingText = subsectionMatch[2] ? subsectionMatch[2].trim() : '';
-            const restOfParagraph = lines.slice(1).join('\n');
-            currentContent = remainingText ? [remainingText, restOfParagraph].filter(Boolean) : restOfParagraph ? [restOfParagraph] : [];
+            const remainingText = subsectionMatch[2]
+              ? subsectionMatch[2].trim()
+              : "";
+            const restOfParagraph = lines.slice(1).join("\n");
+            currentContent = remainingText
+              ? [remainingText, restOfParagraph].filter(Boolean)
+              : restOfParagraph
+              ? [restOfParagraph]
+              : [];
           } else {
             // Not in Case Presentation, treat as regular section
             if (currentSection && currentContent.length > 0) {
-              sections[currentSection] = currentContent.join('\n').trim();
+              sections[currentSection] = currentContent.join("\n").trim();
             }
             currentSection = subsectionMatch[1];
-            const remainingText = subsectionMatch[2] ? subsectionMatch[2].trim() : '';
-            const restOfParagraph = lines.slice(1).join('\n');
-            currentContent = remainingText ? [remainingText, restOfParagraph].filter(Boolean) : restOfParagraph ? [restOfParagraph] : [];
+            const remainingText = subsectionMatch[2]
+              ? subsectionMatch[2].trim()
+              : "";
+            const restOfParagraph = lines.slice(1).join("\n");
+            currentContent = remainingText
+              ? [remainingText, restOfParagraph].filter(Boolean)
+              : restOfParagraph
+              ? [restOfParagraph]
+              : [];
             inCasePresentation = false;
           }
           continue;
         }
-        
+
         // Check if entire paragraph starts with a subsection header
-        const subsectionHeaderMatch = paragraph.match(/^(Patient Profile|History of Present Illness|Past Medical History|Medications|Examination):\s*(.*)/is);
+        const subsectionHeaderMatch = paragraph.match(
+          /^(Patient Profile|History of Present Illness|Past Medical History|Medications|Examination):\s*(.*)/is
+        );
         if (subsectionHeaderMatch) {
           if (inCasePresentation) {
             if (currentSection && currentContent.length > 0) {
-              sections[currentSection] = currentContent.join('\n').trim();
+              sections[currentSection] = currentContent.join("\n").trim();
             }
             currentSection = subsectionHeaderMatch[1];
-            currentContent = subsectionHeaderMatch[2] ? [subsectionHeaderMatch[2].trim()] : [];
+            currentContent = subsectionHeaderMatch[2]
+              ? [subsectionHeaderMatch[2].trim()]
+              : [];
           } else {
             if (currentSection && currentContent.length > 0) {
-              sections[currentSection] = currentContent.join('\n').trim();
+              sections[currentSection] = currentContent.join("\n").trim();
             }
             currentSection = subsectionHeaderMatch[1];
-            currentContent = subsectionHeaderMatch[2] ? [subsectionHeaderMatch[2].trim()] : [];
+            currentContent = subsectionHeaderMatch[2]
+              ? [subsectionHeaderMatch[2].trim()]
+              : [];
             inCasePresentation = false;
           }
           continue;
         }
-        
+
         // Regular content - add to current section
         if (paragraph && currentSection) {
           currentContent.push(paragraph);
@@ -3871,27 +3945,35 @@ export function Dashboard({}: DashboardProps) {
           // If no section yet, check if it starts with "Objective:" in the text
           const objectiveMatch = paragraph.match(/^Objective:\s*(.*)/is);
           if (objectiveMatch) {
-            currentSection = 'Objective';
+            currentSection = "Objective";
             currentContent = [objectiveMatch[1].trim()];
             continue;
           }
         }
       }
-      
+
       // Save the last section
       if (currentSection && currentContent.length > 0) {
-        sections[currentSection] = currentContent.join('\n').trim();
+        sections[currentSection] = currentContent.join("\n").trim();
       }
-      
+
       console.log("📋 Parsed sections:", Object.keys(sections));
-      console.log("📋 Section contents preview:", Object.keys(sections).map(k => `${k}: ${sections[k].substring(0, 100)}...`));
-      
+      console.log(
+        "📋 Section contents preview:",
+        Object.keys(sections).map(
+          (k) => `${k}: ${sections[k].substring(0, 100)}...`
+        )
+      );
+
       return sections;
     };
 
     // Parse description only if we don't have structured fields
-    const parsedSections = hasStructuredFields ? caseSections : parseCaseDescription(caseDescription);
-    const finalCaseSections = Object.keys(parsedSections).length > 0 ? parsedSections : caseSections;
+    const parsedSections = hasStructuredFields
+      ? caseSections
+      : parseCaseDescription(caseDescription);
+    const finalCaseSections =
+      Object.keys(parsedSections).length > 0 ? parsedSections : caseSections;
 
     return (
       <div className="flex-1 p-8 flex flex-col">
@@ -3931,7 +4013,9 @@ export function Dashboard({}: DashboardProps) {
             <div className="space-y-6">
               {/* Title Banner - Blue bar at top */}
               <div className="bg-blue-600 text-white px-6 py-4 rounded-lg">
-                <h1 className="text-2xl font-semibold">{selectedCase || caseBreakdown.title || "Case Breakdown"}</h1>
+                <h1 className="text-2xl font-semibold">
+                  {selectedCase || caseBreakdown.title || "Case Breakdown"}
+                </h1>
               </div>
 
               {/* Case Breakdown Content */}
@@ -3942,97 +4026,150 @@ export function Dashboard({}: DashboardProps) {
                     <p>Case breakdown is being generated. Please wait...</p>
                   </div>
                 )}
-                
+
                 {caseDescription && (
                   <>
                     {/* If parsing found sections, show them; otherwise show raw description */}
                     {Object.keys(finalCaseSections).length > 0 ? (
                       <>
                         {/* Objective - Always show */}
-                        {finalCaseSections['Objective'] && (
+                        {finalCaseSections["Objective"] && (
                           <div>
-                            <h2 className="text-lg font-semibold text-gray-900 mb-2">Objective</h2>
-                            <p className="text-gray-700 whitespace-pre-line">{finalCaseSections['Objective']}</p>
+                            <h2 className="text-lg font-semibold text-gray-900 mb-2">
+                              Objective
+                            </h2>
+                            <p className="text-gray-700 whitespace-pre-line">
+                              {finalCaseSections["Objective"]}
+                            </p>
                           </div>
                         )}
 
                         {/* Case Presentation - Always show with all subsections */}
-                        {(finalCaseSections['Case Presentation'] || finalCaseSections['Patient Profile'] || finalCaseSections['History of Present Illness']) && (
+                        {(finalCaseSections["Case Presentation"] ||
+                          finalCaseSections["Patient Profile"] ||
+                          finalCaseSections["History of Present Illness"]) && (
                           <div>
-                            <h2 className="text-lg font-semibold text-gray-900 mb-3">Case Presentation</h2>
+                            <h2 className="text-lg font-semibold text-gray-900 mb-3">
+                              Case Presentation
+                            </h2>
                             <div className="space-y-3 text-gray-700">
                               {/* Patient Profile */}
-                              {finalCaseSections['Patient Profile'] && (
+                              {finalCaseSections["Patient Profile"] && (
                                 <div>
-                                  <h3 className="font-semibold text-gray-900 mb-1">Patient Profile:</h3>
-                                  <p className="whitespace-pre-line">{finalCaseSections['Patient Profile']}</p>
+                                  <h3 className="font-semibold text-gray-900 mb-1">
+                                    Patient Profile:
+                                  </h3>
+                                  <p className="whitespace-pre-line">
+                                    {finalCaseSections["Patient Profile"]}
+                                  </p>
                                 </div>
                               )}
-                              
+
                               {/* History of Present Illness */}
-                              {finalCaseSections['History of Present Illness'] && (
+                              {finalCaseSections[
+                                "History of Present Illness"
+                              ] && (
                                 <div>
-                                  <h3 className="font-semibold text-gray-900 mb-1">History of Present Illness:</h3>
-                                  <p className="whitespace-pre-line">{finalCaseSections['History of Present Illness']}</p>
+                                  <h3 className="font-semibold text-gray-900 mb-1">
+                                    History of Present Illness:
+                                  </h3>
+                                  <p className="whitespace-pre-line">
+                                    {
+                                      finalCaseSections[
+                                        "History of Present Illness"
+                                      ]
+                                    }
+                                  </p>
                                 </div>
                               )}
-                              
+
                               {/* Past Medical History */}
-                              {finalCaseSections['Past Medical History'] && (
+                              {finalCaseSections["Past Medical History"] && (
                                 <div>
-                                  <h3 className="font-semibold text-gray-900 mb-1">Past Medical History:</h3>
-                                  <p className="whitespace-pre-line">{finalCaseSections['Past Medical History']}</p>
+                                  <h3 className="font-semibold text-gray-900 mb-1">
+                                    Past Medical History:
+                                  </h3>
+                                  <p className="whitespace-pre-line">
+                                    {finalCaseSections["Past Medical History"]}
+                                  </p>
                                 </div>
                               )}
-                              
+
                               {/* Medications */}
-                              {finalCaseSections['Medications'] && (
+                              {finalCaseSections["Medications"] && (
                                 <div>
-                                  <h3 className="font-semibold text-gray-900 mb-1">Medications:</h3>
-                                  <p className="whitespace-pre-line">{finalCaseSections['Medications']}</p>
+                                  <h3 className="font-semibold text-gray-900 mb-1">
+                                    Medications:
+                                  </h3>
+                                  <p className="whitespace-pre-line">
+                                    {finalCaseSections["Medications"]}
+                                  </p>
                                 </div>
                               )}
-                              
+
                               {/* Examination */}
-                              {finalCaseSections['Examination'] && (
+                              {finalCaseSections["Examination"] && (
                                 <div>
-                                  <h3 className="font-semibold text-gray-900 mb-1">Examination:</h3>
-                                  <p className="whitespace-pre-line">{finalCaseSections['Examination']}</p>
+                                  <h3 className="font-semibold text-gray-900 mb-1">
+                                    Examination:
+                                  </h3>
+                                  <p className="whitespace-pre-line">
+                                    {finalCaseSections["Examination"]}
+                                  </p>
                                 </div>
                               )}
-                              
+
                               {/* If Case Presentation exists but no subsections, show it */}
-                              {finalCaseSections['Case Presentation'] && !finalCaseSections['Patient Profile'] && (
-                                <p className="whitespace-pre-line">{finalCaseSections['Case Presentation']}</p>
-                              )}
+                              {finalCaseSections["Case Presentation"] &&
+                                !finalCaseSections["Patient Profile"] && (
+                                  <p className="whitespace-pre-line">
+                                    {finalCaseSections["Case Presentation"]}
+                                  </p>
+                                )}
                             </div>
                           </div>
                         )}
 
                         {/* Initial Investigations - Always show */}
-                        {finalCaseSections['Initial Investigations'] && (
+                        {finalCaseSections["Initial Investigations"] && (
                           <div>
-                            <h2 className="text-lg font-semibold text-gray-900 mb-2">Initial Investigations</h2>
-                            <p className="text-gray-700 whitespace-pre-line">{finalCaseSections['Initial Investigations']}</p>
+                            <h2 className="text-lg font-semibold text-gray-900 mb-2">
+                              Initial Investigations
+                            </h2>
+                            <p className="text-gray-700 whitespace-pre-line">
+                              {finalCaseSections["Initial Investigations"]}
+                            </p>
                           </div>
                         )}
 
                         {/* Case Progression/Intervention - Always show */}
-                        {(finalCaseSections['Case Progression/Intervention'] || finalCaseSections['Case Progression']) && (
+                        {(finalCaseSections["Case Progression/Intervention"] ||
+                          finalCaseSections["Case Progression"]) && (
                           <div>
-                            <h2 className="text-lg font-semibold text-gray-900 mb-2">Case Progression/Intervention</h2>
+                            <h2 className="text-lg font-semibold text-gray-900 mb-2">
+                              Case Progression/Intervention
+                            </h2>
                             <p className="text-gray-700 whitespace-pre-line">
-                              {finalCaseSections['Case Progression/Intervention'] || finalCaseSections['Case Progression']}
+                              {finalCaseSections[
+                                "Case Progression/Intervention"
+                              ] || finalCaseSections["Case Progression"]}
                             </p>
                           </div>
                         )}
 
                         {/* Final Diagnosis/Learning Anchor - Always show */}
-                        {(finalCaseSections['Final Diagnosis/Learning Anchor'] || finalCaseSections['Final Diagnosis']) && (
+                        {(finalCaseSections[
+                          "Final Diagnosis/Learning Anchor"
+                        ] ||
+                          finalCaseSections["Final Diagnosis"]) && (
                           <div>
-                            <h2 className="text-lg font-semibold text-gray-900 mb-2">Final Diagnosis/Learning Anchor</h2>
+                            <h2 className="text-lg font-semibold text-gray-900 mb-2">
+                              Final Diagnosis/Learning Anchor
+                            </h2>
                             <p className="text-gray-700 whitespace-pre-line">
-                              {finalCaseSections['Final Diagnosis/Learning Anchor'] || finalCaseSections['Final Diagnosis']}
+                              {finalCaseSections[
+                                "Final Diagnosis/Learning Anchor"
+                              ] || finalCaseSections["Final Diagnosis"]}
                             </p>
                           </div>
                         )}
@@ -4040,13 +4177,17 @@ export function Dashboard({}: DashboardProps) {
                     ) : (
                       /* If parsing failed, show raw description */
                       <div>
-                        <h2 className="text-lg font-semibold text-gray-900 mb-2">Case Breakdown</h2>
-                        <p className="text-gray-700 whitespace-pre-line">{caseDescription}</p>
+                        <h2 className="text-lg font-semibold text-gray-900 mb-2">
+                          Case Breakdown
+                        </h2>
+                        <p className="text-gray-700 whitespace-pre-line">
+                          {caseDescription}
+                        </p>
                       </div>
                     )}
                   </>
                 )}
-                
+
                 {/* If no description at all, show message */}
                 {!caseDescription && (
                   <div className="text-center py-8 text-gray-500">
@@ -4054,10 +4195,79 @@ export function Dashboard({}: DashboardProps) {
                   </div>
                 )}
               </div>
+
+              {/* Action Buttons */}
+              <div className="flex gap-4 justify-center mt-6">
+                <button
+                  onClick={() => {
+                    const currentDocument = getCurrentChatDocument();
+                    if (currentDocument && caseBreakdown) {
+                      // Set the selected case title for explore cases view
+                      const caseTitle =
+                        selectedCase || caseBreakdown.title || "Case";
+                      setSelectedCase(caseTitle);
+                      localStorage.setItem("selectedCase", caseTitle);
+                      navigateToView("explore-cases");
+                    }
+                  }}
+                  className="px-6 py-3 border-2 border-blue-600 text-blue-600 bg-transparent rounded-lg hover:bg-blue-50 transition-colors font-medium shadow-sm hover:shadow-md flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                  disabled={!caseBreakdown}
+                >
+                  <svg
+                    className="w-5 h-5"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"
+                    />
+                  </svg>
+                  Explore Case
+                </button>
+                <button
+                  onClick={() => {
+                    const currentDocument = getCurrentChatDocument();
+                    if (currentDocument && caseBreakdown) {
+                      // Set the selected case title for MCQs generation
+                      const caseTitle =
+                        selectedCase || caseBreakdown.title || "Case";
+                      setSelectedCase(caseTitle);
+                      localStorage.setItem("selectedCase", caseTitle);
+                      navigateToView("generate-mcqs");
+                    }
+                  }}
+                  className="px-6 py-3 border-2 border-green-600 text-green-600 bg-transparent rounded-lg hover:bg-green-50 transition-colors font-medium shadow-sm hover:shadow-md flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                  disabled={!caseBreakdown}
+                >
+                  <svg
+                    className="w-5 h-5"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
+                    />
+                  </svg>
+                  Generate MCQs
+                </button>
+              </div>
             </div>
           ) : (
             <div className="text-center py-12 text-gray-500">
-              <p>No case breakdown available. {selectedCase ? `Please wait for the case breakdown to generate for "${selectedCase}".` : "Please select a case first."}</p>
+              <p>
+                No case breakdown available.{" "}
+                {selectedCase
+                  ? `Please wait for the case breakdown to generate for "${selectedCase}".`
+                  : "Please select a case first."}
+              </p>
               {uploadError && (
                 <p className="text-red-600 mt-2">{uploadError}</p>
               )}
@@ -4151,7 +4361,6 @@ export function Dashboard({}: DashboardProps) {
               </div>
             </div>
           </div>
-
         </div>
       </div>
     );
