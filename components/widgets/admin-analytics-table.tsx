@@ -46,23 +46,50 @@ export function AdminAnalyticsTable({
   // Helper function to check if user is currently active (last active is today)
   const isUserActive = (lastActive: string): boolean => {
     if (!lastActive) return false;
-    const today = new Date().toISOString().split('T')[0]; // Get YYYY-MM-DD format
-    return lastActive === today;
+    try {
+      const today = new Date().toISOString().split('T')[0]; // Get YYYY-MM-DD format
+      // Normalize the lastActive string (remove any time component if present)
+      const lastActiveDate = lastActive.split('T')[0].trim();
+      return lastActiveDate === today;
+    } catch (error) {
+      return false;
+    }
   };
 
   // Helper function to sort users by last active (most recent first)
   const sortUsersByLastActive = (users: AdminUser[]): AdminUser[] => {
     return [...users].sort((a, b) => {
-      // Active users first
-      const aIsActive = isUserActive(a.last_active);
-      const bIsActive = isUserActive(b.last_active);
+      // Handle missing or invalid dates
+      const aLastActive = a.last_active?.trim() || '';
+      const bLastActive = b.last_active?.trim() || '';
+      
+      // Active users first (active today)
+      const aIsActive = isUserActive(aLastActive);
+      const bIsActive = isUserActive(bLastActive);
       
       if (aIsActive && !bIsActive) return -1;
       if (!aIsActive && bIsActive) return 1;
       
-      // Then sort by date (most recent first)
-      const dateA = new Date(a.last_active || '1970-01-01');
-      const dateB = new Date(b.last_active || '1970-01-01');
+      // Parse dates safely
+      let dateA: Date;
+      let dateB: Date;
+      
+      try {
+        // Extract just the date part (YYYY-MM-DD) if there's a time component
+        const aDateStr = aLastActive.split('T')[0] || aLastActive.split(' ')[0] || '1970-01-01';
+        const bDateStr = bLastActive.split('T')[0] || bLastActive.split(' ')[0] || '1970-01-01';
+        dateA = new Date(aDateStr);
+        dateB = new Date(bDateStr);
+        
+        // Check if dates are valid
+        if (isNaN(dateA.getTime())) dateA = new Date('1970-01-01');
+        if (isNaN(dateB.getTime())) dateB = new Date('1970-01-01');
+      } catch (error) {
+        dateA = new Date('1970-01-01');
+        dateB = new Date('1970-01-01');
+      }
+      
+      // Sort by date (most recent first)
       return dateB.getTime() - dateA.getTime();
     });
   };

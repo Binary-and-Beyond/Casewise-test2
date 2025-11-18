@@ -18,19 +18,14 @@ export const config = {
     return getGoogleClientId();
   },
   get API_BASE_URL() {
-    // Use environment variable for production, fallback to Render URL
-    const url =
-      process.env.NEXT_PUBLIC_API_BASE_URL ||
-      "https://casewise-backend.onrender.com";
+    // Always use localhost:8000 for backend
+    const url = "http://localhost:8000";
     console.log("🔧 Config: API_BASE_URL set to:", url);
     return url;
   },
   get FALLBACK_API_BASE_URL() {
-    // Fallback API uses Render URL
-    return (
-      process.env.NEXT_PUBLIC_API_BASE_URL ||
-      "https://casewise-backend.onrender.com"
-    );
+    // Fallback API always uses localhost:8000
+    return "http://localhost:8000";
   },
 };
 

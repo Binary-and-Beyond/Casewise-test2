@@ -516,6 +516,7 @@ class ConceptRequest(BaseModel):
     """Concept identification request schema"""
     document_id: str
     num_concepts: int = Field(default=1, ge=1, le=1)  # Always generate 1 case breakdown
+    case_title: Optional[str] = None  # Specific case to generate concepts for
 
 class Concept(BaseModel):
     """Concept schema"""
@@ -1381,7 +1382,10 @@ def get_all_users(current_user: dict = Depends(get_current_user)):
             "is_active": 1,
             "created_at": 1,
             "updated_at": 1,
-            "analytics": 1
+            "analytics": 1,
+            "mcq_attempted": 1,
+            "total_questions_correct": 1,
+            "total_questions_attempted": 1
         })
         
         users = []
@@ -1414,8 +1418,45 @@ def get_all_users(current_user: dict = Depends(get_current_user)):
             if total_questions_attempted > 0:
                 average_score = int((total_questions_correct / total_questions_attempted) * 100)
             
-            # Get last active date
-            last_active_date = user.get("updated_at", user.get("created_at", datetime.now()))
+            # Get last active date - use most recent activity from chats or documents
+            activity_dates = []
+            
+            # Start with user's updated_at or created_at
+            user_updated = user.get("updated_at")
+            if user_updated and isinstance(user_updated, datetime):
+                activity_dates.append(user_updated)
+            else:
+                user_created = user.get("created_at")
+                if user_created and isinstance(user_created, datetime):
+                    activity_dates.append(user_created)
+            
+            # Check for most recent chat activity
+            most_recent_chat = db.chats.find_one(
+                {"user_id": str(user["_id"])},
+                sort=[("updated_at", -1)]
+            )
+            if most_recent_chat and most_recent_chat.get("updated_at"):
+                chat_date = most_recent_chat["updated_at"]
+                if isinstance(chat_date, datetime):
+                    activity_dates.append(chat_date)
+            
+            # Check for most recent document upload
+            most_recent_doc = db.documents.find_one(
+                {"uploaded_by": str(user["_id"])},
+                sort=[("uploaded_at", -1)]
+            )
+            if most_recent_doc and most_recent_doc.get("uploaded_at"):
+                doc_date = most_recent_doc["uploaded_at"]
+                if isinstance(doc_date, datetime):
+                    activity_dates.append(doc_date)
+            
+            # Use the most recent date
+            if activity_dates:
+                last_active_date = max(activity_dates)
+            else:
+                last_active_date = datetime.now()
+            
+            # Format the date
             if isinstance(last_active_date, datetime):
                 last_active_date = last_active_date.strftime("%Y-%m-%d")
             else:
@@ -2594,7 +2635,7 @@ async def generate_case_scenarios(
         You are an expert medical case scenario generator specializing in creating comprehensive, educational medical cases for medical students. Based on the following document content and user prompt, generate {request.num_scenarios} realistic, detailed medical case scenarios.
 
         Document Content:
-        {document['content'][:500]}  # Limit content to avoid token limits
+        {document['content'][:3000]}  # Increased context for better relevance
 
         User Prompt: {request.prompt}
 
@@ -2701,19 +2742,46 @@ async def generate_case_titles(
         if not openai_client:
             raise Exception("OpenAI client not initialized")
         
+        # Determine difficulty distribution
+        num_cases = request.num_cases
+        if num_cases == 5:
+            difficulty_distribution = "EXACTLY 1 Easy case (first), 2 Moderate cases (second and third), and 2 Hard cases (fourth and fifth) in this EXACT order"
+            difficulty_requirements = """
+        CRITICAL DIFFICULTY REQUIREMENTS (for 5 cases - MUST FOLLOW THIS EXACT ORDER):
+        - Case 1 (FIRST): MUST be "Easy" - Straightforward presentation, clear symptoms, obvious diagnosis, basic medical knowledge required. Use simple, direct medical concepts from the document.
+        - Case 2 (SECOND): MUST be "Moderate" - Moderate complexity, some diagnostic challenges, requires intermediate clinical reasoning. Use moderately complex concepts from the document.
+        - Case 3 (THIRD): MUST be "Moderate" - Moderate complexity, some diagnostic challenges, requires intermediate clinical reasoning. Use different moderately complex concepts from the document.
+        - Case 4 (FOURTH): MUST be "Hard" - Complex presentation, multiple differential diagnoses, requires advanced clinical reasoning and integration of multiple concepts. Use complex, nuanced concepts from the document.
+        - Case 5 (FIFTH): MUST be "Hard" - Complex presentation, multiple differential diagnoses, requires advanced clinical reasoning and integration of multiple concepts. Use different complex, nuanced concepts from the document.
+        
+        The case description MUST match the difficulty level:
+        - Easy: Clear, straightforward presentation with obvious clinical signs. Simple diagnostic path. Basic pathophysiology. Directly based on document content.
+        - Moderate: Some complexity in presentation, requires connecting multiple findings. Moderate diagnostic challenge. Based on document content but requires some reasoning.
+        - Hard: Complex, nuanced presentation with subtle findings. Multiple possible diagnoses. Requires advanced reasoning and knowledge integration. Based on complex concepts from document."""
+        else:
+            difficulty_distribution = f"Distribute difficulty levels appropriately across {num_cases} cases"
+            difficulty_requirements = "        - Assign difficulty levels (Easy, Moderate, Hard) that match the complexity of each case"
+        
         # Create the prompt for case title generation
         system_prompt = f"""
-        You are an expert medical case generator. Based on the following document content, generate {request.num_cases} realistic medical case titles with brief descriptions.
+        You are an expert medical case generator. Based on the following document content, generate {num_cases} realistic medical case titles with brief descriptions that are DIRECTLY RELEVANT to the document content.
 
         Document Content:
-        {document['content'][:500]}
+        {document['content'][:3000]}
+
+        CRITICAL RELEVANCE REQUIREMENTS:
+        - Cases MUST be directly based on the medical concepts, conditions, and information in the document above
+        - Use specific medical terminology, conditions, and details from the document
+        - Do NOT generate generic cases - every case must reflect actual content from the document
+        - Extract key medical concepts, diseases, symptoms, treatments, or procedures mentioned in the document
+        - Ensure each case scenario incorporates specific information from the document content
 
         IMPORTANT INSTRUCTIONS:
-        - Create realistic, clinically relevant case titles
+        - Create realistic, clinically relevant case titles that are SPECIFICALLY RELATED to the document content
         - Each case should have a clear, descriptive title (1-2 lines)
         - DO NOT include case numbers (e.g., "Case 1:", "Case 2:") in the titles - just use descriptive titles like "Acute Myocardial Infarction in a 55-year-old Male"
         - CRITICAL: Each case description MUST be exactly 250-300 words (minimum 250, maximum 300 words). Count the words carefully. The description should provide comprehensive context including patient presentation, clinical findings, diagnostic considerations, treatment approaches, and important learning points.
-        - Assign appropriate difficulty levels (Easy, Moderate, Hard)
+        {difficulty_requirements}
         - Make cases diverse and educational
         - Focus on different aspects of the medical content
 
@@ -2724,17 +2792,29 @@ async def generate_case_titles(
             {{
                 "id": "case_1",
                 "title": "Specific Case Title WITHOUT case numbers (e.g., 'Acute Myocardial Infarction in a 55-year-old Male' - NOT 'Case 1: Acute Myocardial Infarction')",
-                "description": "A detailed description that is EXACTLY 250-300 words (count carefully). Include comprehensive patient presentation, detailed clinical findings, diagnostic considerations, treatment approaches, and important learning points. The description must be between 250 and 300 words - no less, no more.",
-                "difficulty": "Easy/Moderate/Hard"
+                "description": "A detailed description that is EXACTLY 250-300 words (count carefully) and MATCHES the difficulty level. Easy cases should be straightforward with clear findings. Hard cases should be complex with subtle findings and multiple differentials. Include comprehensive patient presentation, detailed clinical findings, diagnostic considerations, treatment approaches, and important learning points. The description must be between 250 and 300 words - no less, no more.",
+                "difficulty": "Easy" or "Moderate" or "Hard" (must match case complexity)
             }}
         ]
+        
+        CRITICAL FOR 5 CASES: 
+        - Generate exactly 5 unique cases in this EXACT order: [Easy, Moderate, Moderate, Hard, Hard]
+        - Each case description must be comprehensive (250-300 words)
+        - The difficulty level MUST match the complexity of the case description
+        - ALL cases MUST be directly relevant to the document content above
+        - Use specific medical concepts, conditions, and terminology from the document
+        - Case 1 = Easy, Case 2 = Moderate, Case 3 = Moderate, Case 4 = Hard, Case 5 = Hard
         """
         
         # Generate response from OpenAI
+        system_message = "You are an expert medical case generator. Each case description MUST be 250-300 words. Always respond with valid JSON format."
+        if request.num_cases == 5:
+            system_message += " CRITICAL: When generating 5 cases, you MUST create exactly 1 Easy case (first), 2 Moderate cases (second and third), and 2 Hard cases (fourth and fifth) in this EXACT order. The case descriptions must match their difficulty levels and be directly relevant to the document content."
+        
         response = openai_client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
-                {"role": "system", "content": "You are an expert medical case generator. Each case description MUST be 250-300 words. Always respond with valid JSON format."},
+                {"role": "system", "content": system_message},
                 {"role": "user", "content": system_prompt}
             ],
             temperature=0.7,
@@ -2756,6 +2836,44 @@ async def generate_case_titles(
             
             cases_data = json.loads(response_text)
             print(f"SUCCESS: Successfully parsed JSON: {len(cases_data)} cases")
+            
+            # Validate and enforce difficulty distribution for 5 cases
+            if request.num_cases == 5 and len(cases_data) >= 5:
+                # Force correct distribution in exact order: Easy, Moderate, Moderate, Hard, Hard
+                required_distribution = ["Easy", "Moderate", "Moderate", "Hard", "Hard"]
+                
+                # Check current distribution
+                difficulty_counts = {"Easy": 0, "Moderate": 0, "Hard": 0}
+                for case in cases_data[:5]:
+                    diff = case.get("difficulty", "Moderate").strip()
+                    # Normalize difficulty
+                    if diff.lower() == "easy":
+                        difficulty_counts["Easy"] += 1
+                    elif diff.lower() == "moderate":
+                        difficulty_counts["Moderate"] += 1
+                    elif diff.lower() == "hard":
+                        difficulty_counts["Hard"] += 1
+                    else:
+                        difficulty_counts["Moderate"] += 1  # Default to Moderate
+                
+                print(f"📊 Difficulty distribution before fix: Easy={difficulty_counts['Easy']}, Moderate={difficulty_counts['Moderate']}, Hard={difficulty_counts['Hard']}")
+                
+                # Always enforce correct distribution in order (even if already correct, ensure order is right)
+                if difficulty_counts["Easy"] != 1 or difficulty_counts["Moderate"] != 2 or difficulty_counts["Hard"] != 2:
+                    print(f"⚠️ WARNING: Difficulty distribution incorrect. Expected: 1 Easy, 2 Moderate, 2 Hard. Got: {difficulty_counts}")
+                
+                print(f"🔧 Enforcing correct distribution in order: [Easy, Moderate, Moderate, Hard, Hard]")
+                
+                # Force correct distribution in exact order (always, to ensure consistency)
+                for i, case in enumerate(cases_data[:5]):
+                    case["difficulty"] = required_distribution[i]
+                    print(f"  Case {i+1}: Set difficulty to {required_distribution[i]}")
+                
+                # Verify final distribution
+                final_counts = {"Easy": 0, "Moderate": 0, "Hard": 0}
+                for case in cases_data[:5]:
+                    final_counts[case.get("difficulty", "Moderate")] += 1
+                print(f"✅ Final difficulty distribution: Easy={final_counts['Easy']}, Moderate={final_counts['Moderate']}, Hard={final_counts['Hard']}")
         except json.JSONDecodeError as e:
             print(f"ERROR: JSON parsing failed: {e}")
             print(f"Response text: {response.choices[0].message.content[:500]}...")
@@ -3020,35 +3138,6 @@ async def identify_concepts(
     if not document.get("content"):
         raise HTTPException(status_code=400, detail="Document does not contain readable text content")
     
-    # Helper function to generate fallback content from document
-    def generate_fallback_concept(document_content):
-        """Generate a real fallback concept from document content"""
-        doc_preview = document_content[:500] if document_content else "medical case"
-        return {
-            "id": "concept_1",
-            "title": document.get('filename', 'Medical Case').replace('.pdf', '').replace('.docx', '').replace('.txt', ''),
-            "description": f"""Objective: This case explores key clinical concepts and medical principles based on the uploaded document content. The case is designed to help medical students understand important clinical scenarios and diagnostic approaches.
-
-Case Presentation:
-Patient Profile: The patient presents with symptoms and clinical findings relevant to the medical concepts discussed in the document. The presentation reflects the key medical principles and conditions outlined in the source material.
-
-History of Present Illness: Based on the document content, this case involves a clinical scenario that demonstrates important medical concepts. The history reflects the progression and presentation patterns typical of the conditions discussed in the source material.
-
-Past Medical History: The patient's medical background includes relevant conditions and factors that are important for understanding the clinical presentation, as outlined in the document.
-
-Medications: Current medications and treatment approaches are based on standard medical practice for the conditions discussed in the document.
-
-Examination: Physical examination findings include relevant clinical signs and symptoms that align with the medical concepts presented in the document. These findings are important for diagnostic consideration and clinical reasoning.
-
-Initial Investigations: Diagnostic tests and investigations are ordered based on the clinical presentation and align with the medical principles discussed in the document. Results help guide the diagnostic process.
-
-Case Progression/Intervention: The case evolves to demonstrate important clinical decision-making and treatment approaches relevant to the medical concepts in the document.
-
-Final Diagnosis/Learning Anchor: The case illustrates key learning objectives and medical principles from the document, helping students understand important clinical concepts, diagnostic approaches, and treatment strategies.""",
-            "importance": "High",
-            "difficulty": "Moderate"
-        }
-    
     try:
         # Use OpenAI GPT-4 mini
         if not openai_client:
@@ -3063,7 +3152,11 @@ Final Diagnosis/Learning Anchor: The case illustrates key learning objectives an
         while retry_count <= max_retries:
             try:
                 # Create the prompt for concept identification - generate 1 detailed case breakdown
-                system_prompt = f"""Generate a single, comprehensive, multi-paragraph medical case breakdown related to the case scenario from the document content.
+                case_context = ""
+                if request.case_title:
+                    case_context = f"\n\nCRITICAL: Generate a case breakdown specifically for this case: '{request.case_title}'. The breakdown MUST be directly related to this specific case scenario, not generic concepts from the document. Focus on the medical concepts, patient presentation, and clinical details relevant to this specific case."
+                
+                system_prompt = f"""Generate a single, comprehensive, multi-paragraph medical case breakdown that is DIRECTLY RELEVANT to the document content below. The case MUST be based on specific medical concepts, conditions, and information from the document - do not generate generic cases.{case_context}
 
 CRITICAL REQUIREMENTS:
 - Each section must be DETAILED and MULTI-PARAGRAPH (not brief or single sentence)
@@ -3087,7 +3180,9 @@ Required Structure - The case MUST be structured with the following sections:
 
 5. Final Diagnosis/Learning Anchor: The final, definitive diagnosis with detailed explanation, and a comprehensive statement of the core learning objective or principle this case is designed to illustrate. Include pathophysiology, clinical reasoning, and key takeaways (minimum 4-5 sentences).
 
-Content: {document['content'][:500]}
+Content: {document['content'][:3000]}
+
+CRITICAL: The case breakdown MUST be DIRECTLY RELEVANT to the document content above. Use specific medical concepts, conditions, and information from the document. Do not generate generic cases - base everything on the actual document content.
 
 CRITICAL: You must respond with ONLY a valid JSON object (not an array). Do not include any markdown formatting, explanations, or additional text. Start your response directly with {{ and end with }}.
 
@@ -3129,7 +3224,7 @@ Requirements:
                 response = openai_client.chat.completions.create(
                     model="gpt-4o-mini",
                     messages=[
-                        {"role": "system", "content": "Medical educator. Generate a single comprehensive, multi-paragraph medical case breakdown with all required sections. Each section must be DETAILED and MULTI-PARAGRAPH with REAL, SPECIFIC medical content. NEVER use placeholders like [text] or [Patient demographics]. Generate actual patient information, symptoms, and medical details. Return JSON only."},
+                        {"role": "system", "content": "Medical educator. Generate a single comprehensive, multi-paragraph medical case breakdown with all required sections. Each section must be DETAILED and MULTI-PARAGRAPH with REAL, SPECIFIC medical content that is DIRECTLY RELEVANT to the document provided. NEVER use placeholders like [text] or [Patient demographics]. Generate actual patient information, symptoms, and medical details based on the document content. The case MUST reflect specific medical concepts from the document. Return JSON only."},
                         {"role": "user", "content": system_prompt}
                     ],
                     temperature=0.5,  # Reduced for faster, more focused generation
@@ -3209,6 +3304,37 @@ Requirements:
                     if any(indicator in description for indicator in placeholder_indicators):
                         print(f"⚠️ WARNING: Detected placeholder text in response, will retry...")
                         raise ValueError("Placeholder content detected")
+                    
+                    # Check for generic descriptions that are too vague (not detailed case breakdowns)
+                    generic_phrases = [
+                        "systematic review investigates",
+                        "this study examines",
+                        "the research focuses on",
+                        "this document discusses",
+                        "the paper explores",
+                        "this article presents",
+                        "the study analyzes",
+                        "this case explores key clinical concepts",
+                        "based on the document content",
+                        "this is an important medical concept",
+                        "represents a fundamental principle"
+                    ]
+                    description_lower = description.lower()
+                    # If description is mostly generic phrases without specific patient details, reject it
+                    generic_count = sum(1 for phrase in generic_phrases if phrase in description_lower)
+                    # Check for actual case details (patient, symptoms, diagnosis, etc.)
+                    case_detail_indicators = [
+                        "patient", "symptom", "diagnosis", "treatment", "examination", 
+                        "history", "presenting", "complaint", "physical exam", "vital signs",
+                        "laboratory", "imaging", "medication", "dose", "mg", "years old",
+                        "presenting complaint", "chief complaint", "physical examination"
+                    ]
+                    detail_count = sum(1 for indicator in case_detail_indicators if indicator in description_lower)
+                    
+                    # If too many generic phrases and not enough case details, reject
+                    if generic_count >= 2 and detail_count < 3:
+                        print(f"⚠️ WARNING: Description too generic ({generic_count} generic phrases, {detail_count} case details), will retry...")
+                        raise ValueError("Description is too generic and lacks specific case details")
                     
                     # Check if we have structured fields with substantial real content
                     has_real_content = False
@@ -3388,22 +3514,55 @@ async def auto_generate_content(
         if request.generate_cases:
             print(f" Generating {request.num_cases} cases...")
             try:
-                cases_prompt = f"""You are an expert medical case scenario generator specializing in creating comprehensive, educational medical cases for medical students. Based on the following document content, generate {request.num_cases} realistic, detailed medical case scenarios.
+                # Determine difficulty distribution
+                num_cases = request.num_cases
+                if num_cases == 5:
+                    difficulty_distribution = "EXACTLY 1 Easy case (first), 2 Moderate cases (second and third), and 2 Hard cases (fourth and fifth) in this EXACT order"
+                    difficulty_requirements = """
+CRITICAL DIFFICULTY REQUIREMENTS (for 5 cases - MUST FOLLOW THIS EXACT ORDER):
+- Case 1 (FIRST): MUST be "Easy" - Straightforward presentation, clear symptoms, obvious diagnosis, basic medical knowledge required. Use simple, direct medical concepts from the document.
+- Case 2 (SECOND): MUST be "Moderate" - Moderate complexity, some diagnostic challenges, requires intermediate clinical reasoning. Use moderately complex concepts from the document.
+- Case 3 (THIRD): MUST be "Moderate" - Moderate complexity, some diagnostic challenges, requires intermediate clinical reasoning. Use different moderately complex concepts from the document.
+- Case 4 (FOURTH): MUST be "Hard" - Complex presentation, multiple differential diagnoses, requires advanced clinical reasoning and integration of multiple concepts. Use complex, nuanced concepts from the document.
+- Case 5 (FIFTH): MUST be "Hard" - Complex presentation, multiple differential diagnoses, requires advanced clinical reasoning and integration of multiple concepts. Use different complex, nuanced concepts from the document.
+
+The case description MUST match the difficulty level:
+- Easy: Clear, straightforward presentation with obvious clinical signs. Simple diagnostic path. Basic pathophysiology. Directly based on document content.
+- Moderate: Some complexity in presentation, requires connecting multiple findings. Moderate diagnostic challenge. Based on document content but requires some reasoning.
+- Hard: Complex, nuanced presentation with subtle findings. Multiple possible diagnoses. Requires advanced reasoning and knowledge integration. Based on complex concepts from document."""
+                else:
+                    difficulty_distribution = f"Distribute difficulty levels appropriately across {num_cases} cases"
+                    difficulty_requirements = "- Assign difficulty levels (Easy, Moderate, Hard) that match the complexity of each case"
+                
+                cases_prompt = f"""You are an expert medical case scenario generator specializing in creating comprehensive, educational medical cases for medical students. Based on the following document content, generate {num_cases} realistic, detailed medical case scenarios that are DIRECTLY RELEVANT to the document content.
 
 Document Content:
-{document['content'][:500]}
+{document['content'][:3000]}
+
+CRITICAL RELEVANCE REQUIREMENTS:
+- Cases MUST be directly based on the medical concepts, conditions, and information in the document above
+- Use specific medical terminology, conditions, and details from the document
+- Do NOT generate generic cases - every case must reflect actual content from the document
+- Extract key medical concepts, diseases, symptoms, treatments, or procedures mentioned in the document
+- Ensure each case scenario incorporates specific information from the document content
 
 IMPORTANT INSTRUCTIONS:
-- Create realistic, clinically relevant cases
+- Create realistic, clinically relevant cases that are SPECIFICALLY RELATED to the document content
 - Include detailed patient presentations with specific symptoms, vital signs, and history
 - Provide comprehensive case descriptions (minimum 2-3 paragraphs, 200-300 words each)
 - Include specific learning objectives and clinical reasoning points
 - Make cases challenging but educational
 - Include relevant diagnostic considerations and treatment approaches
 
+{difficulty_requirements}
+
 For each scenario, provide:
 1. A clear, descriptive title that indicates the main condition
-2. A detailed, comprehensive case description including:
+2. A detailed, comprehensive case description that MATCHES the difficulty level:
+   - Easy: Straightforward presentation, clear symptoms, obvious diagnosis path
+   - Moderate: Some complexity, requires connecting findings, moderate diagnostic challenge
+   - Hard: Complex presentation, subtle findings, multiple differentials, advanced reasoning required
+   Include:
    - Patient demographics and presenting complaint
    - Detailed history of present illness
    - Relevant past medical history
@@ -3415,24 +3574,33 @@ For each scenario, provide:
    - Differential diagnosis
    - Treatment options
    - Clinical pearls
-4. Appropriate difficulty level (Easy, Moderate, Hard)
+4. Difficulty level that MATCHES the case complexity: "Easy", "Moderate", or "Hard"
 
-Format your response as a JSON array with the following structure:
+Format your response as a JSON array with the following structure (MUST be in this exact order for 5 cases):
 [
     {{
         "title": "Specific Case Title (e.g., 'Acute Myocardial Infarction in a 55-year-old Male')",
-        "description": "Comprehensive case description with detailed patient presentation, history, examination findings, and clinical context. This should be 2-3 paragraphs (200-300 words) providing a thorough clinical scenario.",
+        "description": "Comprehensive case description (200-300 words) that MATCHES the difficulty level and is DIRECTLY RELEVANT to the document. Easy cases should be straightforward, Hard cases should be complex with subtle findings.",
         "key_points": ["Specific learning point 1", "Specific learning point 2", "Specific learning point 3", "Specific learning point 4", "Specific learning point 5"],
-        "difficulty": "Easy/Moderate/Hard"
+        "difficulty": "Easy" (for first case), "Moderate" (for second and third cases), or "Hard" (for fourth and fifth cases)
     }}
 ]
 
-Generate exactly {request.num_cases} unique cases. Each case description must be comprehensive and detailed (200-300 words minimum)."""
+CRITICAL FOR 5 CASES: 
+- Generate exactly 5 unique cases in this EXACT order: [Easy, Moderate, Moderate, Hard, Hard]
+- Each case description must be comprehensive (200-300 words minimum)
+- The difficulty level MUST match the complexity of the case description
+- ALL cases MUST be directly relevant to the document content above
+- Use specific medical concepts, conditions, and terminology from the document"""
+                
+                system_message = "You are an expert medical case scenario generator. Always respond with valid JSON format. Each case description must be comprehensive (200-300 words minimum)."
+                if request.num_cases == 5:
+                    system_message += " CRITICAL: When generating 5 cases, you MUST create exactly 1 Easy case, 2 Moderate cases, and 2 Hard cases. The case descriptions must match their difficulty levels."
                 
                 cases_response = openai_client.chat.completions.create(
                     model="gpt-4o-mini",
                     messages=[
-                        {"role": "system", "content": "You are an expert medical case scenario generator. Always respond with valid JSON format. Each case description must be comprehensive (200-300 words minimum)."},
+                        {"role": "system", "content": system_message},
                         {"role": "user", "content": cases_prompt}
                     ],
                     temperature=0.7,
@@ -3468,6 +3636,45 @@ Generate exactly {request.num_cases} unique cases. Each case description must be
                         
                         # Take the requested number of cases, or all available if fewer
                         cases_to_use = cases_data[:request.num_cases]
+                        
+                        # Validate and enforce difficulty distribution for 5 cases
+                        if request.num_cases == 5 and len(cases_to_use) == 5:
+                            # Force correct distribution in exact order: Easy, Moderate, Moderate, Hard, Hard
+                            required_distribution = ["Easy", "Moderate", "Moderate", "Hard", "Hard"]
+                            
+                            # Check current distribution
+                            difficulty_counts = {"Easy": 0, "Moderate": 0, "Hard": 0}
+                            for case in cases_to_use:
+                                diff = case.get("difficulty", "Moderate").strip()
+                                # Normalize difficulty
+                                if diff.lower() == "easy":
+                                    difficulty_counts["Easy"] += 1
+                                elif diff.lower() == "moderate":
+                                    difficulty_counts["Moderate"] += 1
+                                elif diff.lower() == "hard":
+                                    difficulty_counts["Hard"] += 1
+                                else:
+                                    difficulty_counts["Moderate"] += 1  # Default to Moderate
+                            
+                            print(f"📊 Difficulty distribution before fix: Easy={difficulty_counts['Easy']}, Moderate={difficulty_counts['Moderate']}, Hard={difficulty_counts['Hard']}")
+                            
+                            # Always enforce correct distribution in order (even if already correct, ensure order is right)
+                            if difficulty_counts["Easy"] != 1 or difficulty_counts["Moderate"] != 2 or difficulty_counts["Hard"] != 2:
+                                print(f"⚠️ WARNING: Difficulty distribution incorrect. Expected: 1 Easy, 2 Moderate, 2 Hard. Got: {difficulty_counts}")
+                            
+                            print(f"🔧 Enforcing correct distribution in order: [Easy, Moderate, Moderate, Hard, Hard]")
+                            
+                            # Force correct distribution in exact order (always, to ensure consistency)
+                            for i, case in enumerate(cases_to_use):
+                                case["difficulty"] = required_distribution[i]
+                                print(f"  Case {i+1}: Set difficulty to {required_distribution[i]}")
+                            
+                            # Verify final distribution
+                            final_counts = {"Easy": 0, "Moderate": 0, "Hard": 0}
+                            for case in cases_to_use:
+                                final_counts[case.get("difficulty", "Moderate")] += 1
+                            print(f"✅ Final difficulty distribution: Easy={final_counts['Easy']}, Moderate={final_counts['Moderate']}, Hard={final_counts['Hard']}")
+                        
                         response_data["cases"] = [CaseScenario(**case) for case in cases_to_use]
                         print(f" Generated {len(response_data['cases'])} cases successfully")
                     else:
@@ -3651,28 +3858,42 @@ Generate exactly {request.num_mcqs} questions."""
         # Generate Concepts
         if request.generate_concepts:
             print(f" Generating {request.num_concepts} concepts...")
-            try:
-                concepts_prompt = f"""Identify {request.num_concepts} key medical concepts from this content:
+            # Retry logic for concept generation - force real generation, no fallbacks
+            max_retries = 5
+            retry_count = 0
+            concepts_data = None
+            last_error = None
+            
+            while retry_count <= max_retries:
+                try:
+                    concepts_prompt = f"""Identify {request.num_concepts} key medical concepts from this content. The concepts MUST be DIRECTLY RELEVANT to the document content below.
 
-{document['content'][:500]}
+Document Content:
+{document['content'][:3000]}
+
+CRITICAL REQUIREMENTS:
+- Concepts MUST be based on specific medical information from the document above
+- Use specific medical terminology, conditions, and details from the document
+- Do NOT generate generic concepts - every concept must reflect actual content from the document
+- Each concept description must be detailed and specific (minimum 100 characters)
 
 Return JSON array:
-[{{"id": "concept_1", "title": "Medical Concept", "description": "Brief concept description", "importance": "High|Medium|Low"}}]
+[{{"id": "concept_1", "title": "Specific Medical Concept from Document", "description": "Detailed concept description based on document content (minimum 100 characters)", "importance": "High|Medium|Low"}}]
 
-Identify exactly {request.num_concepts} concepts."""
-                
-                concepts_response = openai_client.chat.completions.create(
-                    model="gpt-4o-mini",
-                    messages=[
-                        {"role": "system", "content": "You are an expert medical educator identifying key concepts. Always respond with valid JSON format."},
-                        {"role": "user", "content": concepts_prompt}
-                    ],
-                    temperature=0.7,
-                    max_tokens=2000
-                )
-                print(f"Raw concepts response: {concepts_response.choices[0].message.content[:500]}...")
-                
-                try:
+Identify exactly {request.num_concepts} concepts that are directly relevant to the document content."""
+                    
+                    concepts_response = openai_client.chat.completions.create(
+                        model="gpt-4o-mini",
+                        messages=[
+                            {"role": "system", "content": "You are an expert medical educator identifying key concepts. Always respond with valid JSON format. Concepts MUST be directly relevant to the document content provided."},
+                            {"role": "user", "content": concepts_prompt}
+                        ],
+                        temperature=0.7,
+                        max_tokens=3000
+                    )
+                    print(f"🔄 Attempt {retry_count + 1} of {max_retries + 1} to generate concepts...")
+                    print(f"Raw concepts response: {concepts_response.choices[0].message.content[:500]}...")
+                    
                     # Clean the response text
                     response_text = concepts_response.choices[0].message.content.strip()
                     
@@ -3690,44 +3911,61 @@ Identify exactly {request.num_concepts} concepts."""
                         json_text = response_text[start_idx:end_idx]
                         concepts_data = json.loads(json_text)
                         
+                        # Validate content - check for real content, not placeholders
+                        has_valid_content = False
+                        for concept in concepts_data:
+                            desc = concept.get("description", "")
+                            title = concept.get("title", "")
+                            # Check for placeholder text
+                            if any(placeholder in desc.lower() or placeholder in title.lower() 
+                                   for placeholder in ["[text]", "[patient", "[medical", "placeholder", "example"]):
+                                raise ValueError("Generated content contains placeholders")
+                            # Check minimum length
+                            if len(desc) >= 100 and len(title) >= 10:
+                                has_valid_content = True
+                        
+                        if not has_valid_content:
+                            raise ValueError("Generated concepts lack sufficient detail")
+                        
                         # Ensure we have the right number of concepts
                         if len(concepts_data) < request.num_concepts:
                             print(f"Warning: Only got {len(concepts_data)} concepts, expected {request.num_concepts}")
-                            # If we got fewer concepts than requested, try to generate more
                             if len(concepts_data) == 0:
                                 raise ValueError("No concepts generated")
                         
                         # Take the requested number of concepts, or all available if fewer
                         concepts_to_use = concepts_data[:request.num_concepts]
                         response_data["concepts"] = [Concept(**concept) for concept in concepts_to_use]
-                        print(f" Generated {len(response_data['concepts'])} concepts successfully")
+                        print(f"✅ Generated {len(response_data['concepts'])} concepts successfully")
+                        break  # Success, exit retry loop
                     else:
                         raise ValueError("No valid JSON array found in response")
                         
-                except json.JSONDecodeError as e:
-                    print(f" Failed to parse concepts JSON: {e}")
-                    print(f" Response text: {concepts_response.choices[0].message.content[:500]}...")
-                    # Create fallback concepts based on document content
-                    fallback_concepts = []
-                    for i in range(min(request.num_concepts, 5)):  # Limit fallback to 5 concepts
-                        fallback_concepts.append({
-                            "id": f"concept_{i+1}",
-                            "title": f"Key Medical Concept {i+1} from {document.get('filename', 'Document')}",
-                            "description": f"This is an important medical concept extracted from the uploaded document '{document.get('filename', 'Document')}'. It represents a fundamental principle or clinical knowledge that is essential for understanding the medical content discussed in the document.",
-                            "importance": "High"
-                        })
-                    response_data["concepts"] = [Concept(**concept) for concept in fallback_concepts]
-                    print(f" Generated {len(response_data['concepts'])} fallback concepts")
-            except Exception as e:
-                print(f" Concept generation failed: {e}")
-                # Create minimal fallback
-                fallback_concept = {
-                    "id": "concept_1",
-                    "title": f"Key Concept from {document.get('filename', 'Document')}",
-                    "description": f"Important medical concept from the uploaded document content.",
-                    "importance": "High"
-                }
-                response_data["concepts"] = [Concept(**fallback_concept)]
+                except (json.JSONDecodeError, ValueError, Exception) as e:
+                    last_error = e
+                    print(f"❌ ERROR on attempt {retry_count + 1}: {e}")
+                    if retry_count < max_retries:
+                        retry_count += 1
+                        # Exponential backoff: 1s, 2s, 4s, 8s, 16s
+                        delay = min(2 ** retry_count, 16)
+                        print(f"🔄 Retrying concept generation... ({retry_count}/{max_retries}) after {delay}s delay")
+                        import time
+                        time.sleep(delay)
+                        continue
+                    else:
+                        # All retries failed - raise error instead of using fallback
+                        print(f"❌ All {max_retries + 1} attempts failed. Last error: {last_error}")
+                        raise HTTPException(
+                            status_code=500, 
+                            detail=f"Failed to generate concepts after {max_retries + 1} attempts. Please try again. Error: {str(last_error)}"
+                        )
+            
+            # If we get here without concepts_data, something went wrong
+            if not concepts_data:
+                raise HTTPException(
+                    status_code=500,
+                    detail="Failed to generate concepts. No valid content was produced. Please try again."
+                )
         
         # Generate Case Titles
         if request.generate_titles:
@@ -4092,29 +4330,30 @@ async def chat_with_ai(
         print("AI: Creating prompt...")
         
         # Check if this is an explore cases request (when case_title is present in request)
-        # For explore cases, use the focused concept explanation format
+        # For explore cases, use conversational format
         case_title = request.case_title
         
         if case_title:
-            # Explore Cases Mode: Focused concept explanation format
-            system_prompt = f"""You are an expert Medical Educator tasked with providing focused, high-yield explanations of clinical concepts from a preceding case-based learning (CBL) scenario. 
-
-User Request: The user has selected the following Key Concept for detailed explanation: {request.message}
-
-Instructions for Response Generation:
-
-Medical Accuracy: Ensure the explanation is clinically precise and relevant to the learning objectives of a medical student. 
-
-Focus and Sufficiency: The explanation must be highly focused on the mechanism, pathophysiology, or clinical application mentioned in the concept. Provide *sufficient* detail to ensure a robust understanding, but do not include tangential information. 
-
-Concise Packaging Constraint: Present the entire explanation using a maximum of five (5) concise bullet points or short, distinct paragraphs. The total explanation text must not exceed **eight (8) lines** in length. 
-
-Structure: Begin with a brief introductory sentence, followed by the concise details in bullet points. Generate the robust, focused explanation now for the selected concept.
+            # Explore Cases Mode: Conversational format - no bullet points, natural conversation
+            system_prompt = f"""You are an expert Medical Educator having a natural, conversational discussion with a medical student about a clinical case. 
 
 Case Context: {case_title}
+
+User Question: {request.message}
+
+CRITICAL FORMATTING REQUIREMENTS:
+- Respond in a natural, conversational manner - like you're talking to a colleague or student
+- DO NOT use bullet points, numbered lists, or any structured formatting
+- Write in flowing paragraphs, as if having a conversation
+- Use natural transitions between ideas
+- Be clear and educational, but maintain a conversational tone
+- Respond as if you're explaining concepts in person, not writing a formal document
+
+Provide a comprehensive, clinically accurate explanation that flows naturally like a conversation. Reference the case context when relevant, and explain medical concepts in a way that feels like a discussion rather than a structured presentation.
+
 {document_context}"""
             
-            system_role = "Expert Medical Educator providing focused, high-yield explanations of clinical concepts from case-based learning scenarios."
+            system_role = "You are an expert Medical Educator having a natural, conversational discussion with a medical student. Respond in flowing paragraphs without bullet points or structured formatting - just like a natural conversation."
         else:
             # General chat mode: standard medical assistant
             system_prompt = f"""Medical AI assistant. Provide concise, accurate answers.
@@ -4390,25 +4629,26 @@ async def send_chat_message(
             raise Exception("OpenAI client not initialized")
         
         if case_title:
-            # Explore Cases Mode: Focused concept explanation format
-            system_prompt = f"""You are an expert Medical Educator tasked with providing focused, high-yield explanations of clinical concepts from a preceding case-based learning (CBL) scenario. 
-
-User Request: The user has selected the following Key Concept for detailed explanation: {request.message}
-
-Instructions for Response Generation:
-
-Medical Accuracy: Ensure the explanation is clinically precise and relevant to the learning objectives of a medical student. 
-
-Focus and Sufficiency: The explanation must be highly focused on the mechanism, pathophysiology, or clinical application mentioned in the concept. Provide *sufficient* detail to ensure a robust understanding, but do not include tangential information. 
-
-Concise Packaging Constraint: Present the entire explanation using a maximum of five (5) concise bullet points or short, distinct paragraphs. The total explanation text must not exceed **eight (8) lines** in length. 
-
-Structure: Begin with a brief introductory sentence, followed by the concise details in bullet points. Generate the robust, focused explanation now for the selected concept.
+            # Explore Cases Mode: Conversational format - no bullet points, natural conversation
+            system_prompt = f"""You are an expert Medical Educator having a natural, conversational discussion with a medical student about a clinical case. 
 
 Case Context: {case_title}
+
+User Question: {request.message}
+
+CRITICAL FORMATTING REQUIREMENTS:
+- Respond in a natural, conversational manner - like you're talking to a colleague or student
+- DO NOT use bullet points, numbered lists, or any structured formatting
+- Write in flowing paragraphs, as if having a conversation
+- Use natural transitions between ideas
+- Be clear and educational, but maintain a conversational tone
+- Respond as if you're explaining concepts in person, not writing a formal document
+
+Provide a comprehensive, clinically accurate explanation that flows naturally like a conversation. Reference the case context when relevant, and explain medical concepts in a way that feels like a discussion rather than a structured presentation.
+
 {document_context}"""
             
-            system_role = "Expert Medical Educator providing focused, high-yield explanations of clinical concepts from case-based learning scenarios."
+            system_role = "You are an expert Medical Educator having a natural, conversational discussion with a medical student. Respond in flowing paragraphs without bullet points or structured formatting - just like a natural conversation."
         else:
             # General chat mode: standard medical assistant
             system_prompt = f"""Medical AI assistant. Provide concise, accurate answers.

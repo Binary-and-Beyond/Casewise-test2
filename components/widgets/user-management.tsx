@@ -48,14 +48,66 @@ export function UserManagement({
   const [hasChanges, setHasChanges] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
 
+  // Helper function to check if user is currently active (last active is today)
+  const isUserActive = (lastActive: string): boolean => {
+    if (!lastActive) return false;
+    try {
+      const today = new Date().toISOString().split('T')[0]; // Get YYYY-MM-DD format
+      // Normalize the lastActive string (remove any time component if present)
+      const lastActiveDate = lastActive.split('T')[0].trim();
+      return lastActiveDate === today;
+    } catch (error) {
+      return false;
+    }
+  };
+
+  // Helper function to sort users by last active (most recent first)
+  const sortUsersByLastActive = (users: User[]): User[] => {
+    return [...users].sort((a, b) => {
+      // Handle missing or invalid dates
+      const aLastActive = a.last_active?.trim() || '';
+      const bLastActive = b.last_active?.trim() || '';
+      
+      // Active users first (active today)
+      const aIsActive = isUserActive(aLastActive);
+      const bIsActive = isUserActive(bLastActive);
+      
+      if (aIsActive && !bIsActive) return -1;
+      if (!aIsActive && bIsActive) return 1;
+      
+      // Parse dates safely
+      let dateA: Date;
+      let dateB: Date;
+      
+      try {
+        // Extract just the date part (YYYY-MM-DD) if there's a time component
+        const aDateStr = aLastActive.split('T')[0] || aLastActive.split(' ')[0] || '1970-01-01';
+        const bDateStr = bLastActive.split('T')[0] || bLastActive.split(' ')[0] || '1970-01-01';
+        dateA = new Date(aDateStr);
+        dateB = new Date(bDateStr);
+        
+        // Check if dates are valid
+        if (isNaN(dateA.getTime())) dateA = new Date('1970-01-01');
+        if (isNaN(dateB.getTime())) dateB = new Date('1970-01-01');
+      } catch (error) {
+        dateA = new Date('1970-01-01');
+        dateB = new Date('1970-01-01');
+      }
+      
+      // Sort by date (most recent first)
+      return dateB.getTime() - dateA.getTime();
+    });
+  };
+
   // Fetch real user data from API
   useEffect(() => {
     const fetchUsers = async () => {
       try {
         setIsLoading(true);
         const response = await apiService.getAllUsers();
-        setUsers(response.users);
-        setOriginalUsers(response.users); // Store original data for comparison
+        const sortedUsers = sortUsersByLastActive(response.users as User[]);
+        setUsers(sortedUsers);
+        setOriginalUsers(sortedUsers); // Store original data for comparison
         setHasChanges(false);
       } catch (error) {
         console.error("Failed to fetch users:", error);
@@ -150,8 +202,9 @@ export function UserManagement({
       // Refresh user data from API to get the latest state
       try {
         const response = await apiService.getAllUsers();
-        setUsers(response.users);
-        setOriginalUsers(response.users);
+        const sortedUsers = sortUsersByLastActive(response.users as User[]);
+        setUsers(sortedUsers);
+        setOriginalUsers(sortedUsers);
         setHasChanges(false);
         console.log("✅ User data refreshed after save");
       } catch (error) {
@@ -215,15 +268,6 @@ export function UserManagement({
           </p>
         </div>
         <div className="flex space-x-3">
-          {onBackToAnalytics && (
-            <Button
-              onClick={onBackToAnalytics}
-              variant="outline"
-              className="px-4 py-2"
-            >
-              ← Back to Analytics
-            </Button>
-          )}
           {hasChanges && (
             <>
               <Button

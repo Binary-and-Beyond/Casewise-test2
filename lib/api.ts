@@ -1269,13 +1269,15 @@ class ApiService {
 
   async identifyConcepts(
     documentId: string,
-    numConcepts: number = 3
+    numConcepts: number = 3,
+    caseTitle?: string
   ): Promise<ConceptResponse> {
     console.log(
       "🎯 Starting concept identification with enhanced timeout handling..."
     );
     console.log("📊 Document ID:", documentId);
     console.log("📊 Number of concepts:", numConcepts);
+    console.log("📊 Case Title:", caseTitle);
 
     // Use fetchWithRetry for robust timeout handling with retries
     const response = await this.fetchWithRetry(
@@ -1288,6 +1290,7 @@ class ApiService {
         body: JSON.stringify({
           document_id: documentId,
           num_concepts: numConcepts,
+          case_title: caseTitle || null,
         }),
       },
       180000, // 3 minutes timeout for concept identification (increased)

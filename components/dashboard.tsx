@@ -480,6 +480,19 @@ export function Dashboard({}: DashboardProps) {
   // Chat persistence is handled by localStorage and API calls
   // Removed automatic refresh to prevent unnecessary reloads
 
+  // Auto-select first case when entering identify-concepts view
+  useEffect(() => {
+    if (
+      currentView === "identify-concepts" &&
+      generatedCases.length > 0 &&
+      !selectedCase
+    ) {
+      console.log("🎯 Auto-selecting first case for identify-concepts view");
+      const firstCase = generatedCases[0];
+      setSelectedCaseWithPersistence(firstCase.title);
+    }
+  }, [currentView, generatedCases, selectedCase]);
+
   // Generate concepts on-demand when identify-concepts view is accessed
   useEffect(() => {
     if (
@@ -509,7 +522,8 @@ export function Dashboard({}: DashboardProps) {
             // Use the dedicated identify concepts API instead of autoGenerateContent
             const conceptsResponse = await apiService.identifyConcepts(
               currentDocument.id,
-              1 // Generate single case breakdown
+              1, // Generate single case breakdown
+              selectedCase // Pass the case title to generate case-specific concepts
             );
 
             console.log("📊 Concepts response:", conceptsResponse);
@@ -801,18 +815,29 @@ export function Dashboard({}: DashboardProps) {
       }
 
       if (content.concepts && content.concepts.length > 0) {
-        // Group concepts by case title
-        const conceptGroups: Record<string, string[]> = {};
+        // Group concepts by case title - preserve full concept objects, not just strings
+        const conceptGroups: Record<string, any[]> = {};
         content.concepts.forEach((concept) => {
           const caseTitle = concept.case_title || "General";
           if (!conceptGroups[caseTitle]) {
             conceptGroups[caseTitle] = [];
           }
-          conceptGroups[caseTitle].push(
-            `${concept.title}: ${concept.description}`
-          );
+          // Store the full concept object, not just a string
+          conceptGroups[caseTitle].push(concept);
         });
-        setGeneratedConcepts(conceptGroups);
+        // Merge with existing concepts instead of replacing
+        setGeneratedConcepts((prev) => {
+          const merged = {
+            ...prev,
+            ...conceptGroups,
+          };
+          console.log("🔄 Concept Merge Debug:", {
+            previousCases: Object.keys(prev),
+            newCases: Object.keys(conceptGroups),
+            mergedCases: Object.keys(merged),
+          });
+          return merged;
+        });
         console.log(
           "✅ Loaded concepts for active chat:",
           content.concepts.length
@@ -1697,18 +1722,29 @@ export function Dashboard({}: DashboardProps) {
       }
 
       if (content.concepts && content.concepts.length > 0) {
-        // Group concepts by case title
-        const conceptGroups: Record<string, string[]> = {};
+        // Group concepts by case title - preserve full concept objects, not just strings
+        const conceptGroups: Record<string, any[]> = {};
         content.concepts.forEach((concept) => {
           const caseTitle = concept.case_title || "General";
           if (!conceptGroups[caseTitle]) {
             conceptGroups[caseTitle] = [];
           }
-          conceptGroups[caseTitle].push(
-            `${concept.title}: ${concept.description}`
-          );
+          // Store the full concept object, not just a string
+          conceptGroups[caseTitle].push(concept);
         });
-        setGeneratedConcepts(conceptGroups);
+        // Merge with existing concepts instead of replacing
+        setGeneratedConcepts((prev) => {
+          const merged = {
+            ...prev,
+            ...conceptGroups,
+          };
+          console.log("🔄 Concept Merge Debug:", {
+            previousCases: Object.keys(prev),
+            newCases: Object.keys(conceptGroups),
+            mergedCases: Object.keys(merged),
+          });
+          return merged;
+        });
         console.log("✅ Loaded concepts:", content.concepts.length);
       }
 
@@ -1878,7 +1914,7 @@ export function Dashboard({}: DashboardProps) {
               navigateToView("main");
             },
           },
-          { label: "Identify Concepts", isActive: true },
+          { label: "Key Concepts", isActive: true },
         ];
       case "concept-detail":
         return [
@@ -1904,7 +1940,7 @@ export function Dashboard({}: DashboardProps) {
             },
           },
           {
-            label: "Identify Concepts",
+            label: "Key Concepts",
             onClick: () => navigateToView("identify-concepts"),
           },
           { label: selectedConcept || "Concept", isActive: true },
@@ -2388,7 +2424,11 @@ export function Dashboard({}: DashboardProps) {
       }
 
       // Use the new concepts API endpoint
-      const response = await apiService.identifyConcepts(currentDocument.id, 5);
+      const response = await apiService.identifyConcepts(
+        currentDocument.id,
+        1, // Generate single case breakdown
+        selectedCase // Pass the case title to generate case-specific concepts
+      );
 
       // Extract concept strings from the API response
       const conceptStrings = response.concepts.map(
@@ -3608,28 +3648,11 @@ export function Dashboard({}: DashboardProps) {
               <p className="text-sm mt-2">
                 MCQs are being generated for each case individually.
               </p>
-              <div className="mt-4">
-                <Button
-                  onClick={retryMCQGeneration}
-                  disabled={isGeneratingMCQs === selectedCase}
-                  variant="outline"
-                  size="sm"
-                >
-                  {isGeneratingMCQs === selectedCase ? (
-                    <>
-                      <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-gray-600 mr-2"></div>
-                      Generating...
-                    </>
-                  ) : (
-                    "Retry MCQ Generation"
-                  )}
-                </Button>
-                {uploadError && (
-                  <div className="mt-3 p-3 bg-red-50 border border-red-200 rounded">
-                    <p className="text-red-800 text-sm">⚠️ {uploadError}</p>
-                  </div>
-                )}
-              </div>
+              {uploadError && (
+                <div className="mt-3 p-3 bg-red-50 border border-red-200 rounded">
+                  <p className="text-red-800 text-sm">⚠️ {uploadError}</p>
+                </div>
+              )}
             </div>
           </div>
         ) : (
@@ -3642,6 +3665,64 @@ export function Dashboard({}: DashboardProps) {
             </div>
           </div>
         )}
+
+        {/* Action Buttons */}
+        <div className="mt-6">
+          <div className="flex gap-4 justify-center">
+            <button
+              onClick={() => {
+                const currentDocument = getCurrentChatDocument();
+                if (currentDocument && selectedCase) {
+                  setCurrentViewWithPersistence("identify-concepts");
+                }
+              }}
+              disabled={!selectedCase || isGeneratingMCQs === selectedCase || isGeneratingConcepts || isUploading}
+              className="px-6 py-3 border-2 border-blue-600 text-blue-600 bg-transparent rounded-lg hover:bg-blue-50 transition-colors font-medium shadow-sm hover:shadow-md flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <svg
+                className="w-5 h-5"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"
+                />
+              </svg>
+              Identify Concepts
+            </button>
+            <button
+              onClick={() => {
+                const currentDocument = getCurrentChatDocument();
+                if (currentDocument && selectedCase) {
+                  setSelectedCase(selectedCase);
+                  localStorage.setItem("selectedCase", selectedCase);
+                  setCurrentViewWithPersistence("explore-cases");
+                }
+              }}
+              disabled={!selectedCase || isGeneratingMCQs === selectedCase || isGeneratingConcepts || isUploading}
+              className="px-6 py-3 border-2 border-green-600 text-green-600 bg-transparent rounded-lg hover:bg-green-50 transition-colors font-medium shadow-sm hover:shadow-md flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <svg
+                className="w-5 h-5"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"
+                />
+              </svg>
+              Explore Case
+            </button>
+          </div>
+        </div>
       </div>
     );
   };
@@ -3724,7 +3805,7 @@ export function Dashboard({}: DashboardProps) {
         </div>
 
         {/* Action Buttons */}
-        <div className="mt-4">
+        <div className="mt-6">
           <ActionButtons
             onGenerateMCQs={() => {
               if (!isGeneratingMCQs && !isUploading) {
@@ -3752,7 +3833,34 @@ export function Dashboard({}: DashboardProps) {
       return null;
     }
 
-    // Get the single case breakdown
+    // Auto-select first case if no case is selected and cases are available
+    if (!selectedCase && generatedCases.length > 0) {
+      const firstCase = generatedCases[0];
+      console.log("🎯 Auto-selecting first case for identify-concepts view:", firstCase.title);
+      setSelectedCaseWithPersistence(firstCase.title);
+      // Return loading state while case is being selected
+      return (
+        <div className="flex-1 p-8">
+          <div className="text-center py-8">
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto mb-4"></div>
+            <p className="text-gray-600">Loading case...</p>
+          </div>
+        </div>
+      );
+    }
+
+    // If no case is selected and no cases available, show message
+    if (!selectedCase && generatedCases.length === 0) {
+      return (
+        <div className="flex-1 p-8">
+          <div className="text-center py-12 text-gray-500">
+            <p>No cases available. Please generate cases first.</p>
+          </div>
+        </div>
+      );
+    }
+
+    // Get the single case breakdown for the selected case
     const caseBreakdown = concepts && concepts.length > 0 ? concepts[0] : null;
 
     // Check if we have new structured format (separate fields) or old format (description to parse)
@@ -4005,7 +4113,7 @@ export function Dashboard({}: DashboardProps) {
                   ></div>
                 </div>
                 <p className="text-sm text-gray-500 mt-3">
-                  This usually takes 10-15 seconds
+                  This may take a few moments
                 </p>
               </div>
             </div>
@@ -4188,10 +4296,20 @@ export function Dashboard({}: DashboardProps) {
                   </>
                 )}
 
-                {/* If no description at all, show message */}
+                {/* If no description at all, show loading or message */}
                 {!caseDescription && (
                   <div className="text-center py-8 text-gray-500">
-                    <p>Case breakdown is being generated. Please wait...</p>
+                    {isGeneratingConcepts || isUploading ? (
+                      <>
+                        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto mb-4"></div>
+                        <p>Generating case breakdown... Please wait...</p>
+                        {autoLoadingProgress && (
+                          <p className="text-sm mt-2">{autoLoadingProgress}</p>
+                        )}
+                      </>
+                    ) : (
+                      <p>Case breakdown is being generated. Please wait...</p>
+                    )}
                   </div>
                 )}
               </div>
@@ -4223,7 +4341,7 @@ export function Dashboard({}: DashboardProps) {
                       strokeLinecap="round"
                       strokeLinejoin="round"
                       strokeWidth={2}
-                      d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"
+                      d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"
                     />
                   </svg>
                   Explore Case
