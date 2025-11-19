@@ -495,20 +495,42 @@ export function Dashboard({}: DashboardProps) {
 
   // Generate concepts on-demand when identify-concepts view is accessed
   useEffect(() => {
+    console.log(`🔍 useEffect triggered - currentView: ${currentView}, selectedCase: ${selectedCase}`);
+    console.log(`🔍 generatedCases:`, generatedCases.map(c => ({ title: c.title, difficulty: c.difficulty })));
+    
+    // Check if this is an Easy case - force regeneration even if concepts exist
+    const caseDifficulty = selectedCase ? getCaseDifficulty(selectedCase) : "";
+    const isEasyCase = caseDifficulty.toLowerCase() === "easy";
+    const conceptsExist = selectedCase && generatedConcepts[selectedCase] && generatedConcepts[selectedCase].length > 0;
+    
+    // Also check if case title contains "easy" as a fallback
+    const titleContainsEasy = selectedCase && selectedCase.toLowerCase().includes("easy");
+    const finalIsEasyCase = isEasyCase || titleContainsEasy;
+    
+    console.log(`🔍 Case difficulty: ${caseDifficulty}, isEasyCase: ${isEasyCase}, titleContainsEasy: ${titleContainsEasy}, finalIsEasyCase: ${finalIsEasyCase}, conceptsExist: ${conceptsExist}`);
+    
+    // Force regeneration for Easy cases, or generate if concepts don't exist
+    const shouldGenerate = finalIsEasyCase || !conceptsExist;
+    
+    console.log(`🔍 shouldGenerate: ${shouldGenerate}, isGeneratingConcepts: ${isGeneratingConcepts}, conceptGenerationRef.current: ${conceptGenerationRef.current}`);
+    
     if (
       currentView === "identify-concepts" &&
       selectedCase &&
-      (!generatedConcepts[selectedCase] ||
-        generatedConcepts[selectedCase].length === 0) &&
+      shouldGenerate &&
       !isGeneratingConcepts &&
       !conceptGenerationRef.current
     ) {
+      console.log(`✅ All conditions met, starting concept generation...`);
+      // Capture values for async function
+      const capturedIsEasyCase = finalIsEasyCase;
+      const capturedSelectedCase = selectedCase;
       const generateConceptsOnDemand = async () => {
         // Prevent multiple simultaneous calls
         if (conceptGenerationRef.current) return;
 
         conceptGenerationRef.current = true;
-        console.log("🎯 Generating concepts on-demand...");
+        console.log(`🎯 Generating concepts on-demand... ${capturedIsEasyCase ? "(FORCING REGENERATION FOR EASY CASE)" : ""}`);
 
         // Add a small delay to make the loading animation appear smoothly
         setTimeout(() => {
@@ -518,12 +540,18 @@ export function Dashboard({}: DashboardProps) {
 
         try {
           const currentDocument = getCurrentChatDocument();
+          console.log(`🔵 Current document:`, currentDocument ? currentDocument.id : "NONE");
           if (currentDocument) {
+            console.log(`🔵 About to call apiService.identifyConcepts with:`);
+            console.log(`🔵   - documentId: ${currentDocument.id}`);
+            console.log(`🔵   - numConcepts: 1`);
+            console.log(`🔵   - caseTitle: ${selectedCase}`);
+            
             // Use the dedicated identify concepts API instead of autoGenerateContent
             const conceptsResponse = await apiService.identifyConcepts(
               currentDocument.id,
               1, // Generate single case breakdown
-              selectedCase // Pass the case title to generate case-specific concepts
+              capturedSelectedCase // Pass the case title to generate case-specific concepts
             );
 
             console.log("📊 Concepts response:", conceptsResponse);
@@ -535,7 +563,7 @@ export function Dashboard({}: DashboardProps) {
               // Store the full concept object for detailed display
               setGeneratedConcepts((prev) => ({
                 ...prev,
-                [selectedCase]: conceptsResponse.concepts,
+                [capturedSelectedCase]: conceptsResponse.concepts,
               }));
               console.log(
                 "✅ Case breakdown generated on-demand:",
@@ -546,7 +574,7 @@ export function Dashboard({}: DashboardProps) {
               try {
                 const contentToSave = {
                   concepts: conceptsResponse.concepts,
-                  case_title: selectedCase,
+                  case_title: capturedSelectedCase,
                 };
                 await apiService.saveGeneratedContent(
                   activeChat,
@@ -571,7 +599,7 @@ export function Dashboard({}: DashboardProps) {
 
       generateConceptsOnDemand();
     }
-  }, [currentView, selectedCase, isGeneratingConcepts, activeChat]);
+  }, [currentView, selectedCase, isGeneratingConcepts, activeChat, generatedConcepts]);
 
   const loadUserChats = async () => {
     // Prevent multiple simultaneous calls
@@ -3360,9 +3388,18 @@ export function Dashboard({}: DashboardProps) {
                 setSelectedCaseWithPersistence(title);
               }}
               onIdentifyConcepts={(title) => {
+                console.log(`🔵 Key Concepts clicked for case: ${title}`);
+                const caseDifficulty = getCaseDifficulty(title);
+                const isEasyCase = caseDifficulty.toLowerCase() === "easy";
+                console.log(`🔵 Case difficulty: ${caseDifficulty}, isEasyCase: ${isEasyCase}`);
                 setSelectedCaseWithPersistence(title);
+                // Clear the ref to allow regeneration, especially for Easy cases
+                conceptGenerationRef.current = false;
                 if (!isGeneratingConcepts && !isUploading) {
+                  console.log(`🔵 Navigating to identify-concepts view`);
                   navigateToView("identify-concepts");
+                } else {
+                  console.log(`🔵 Skipping navigation - isGeneratingConcepts: ${isGeneratingConcepts}, isUploading: ${isUploading}`);
                 }
               }}
               onExploreCase={(title) => {
@@ -4080,8 +4117,94 @@ export function Dashboard({}: DashboardProps) {
     const parsedSections = hasStructuredFields
       ? caseSections
       : parseCaseDescription(caseDescription);
-    const finalCaseSections =
-      Object.keys(parsedSections).length > 0 ? parsedSections : caseSections;
+    
+    // If no sections were found from parsing and we have a description, check if we should regenerate
+    let finalCaseSections = Object.keys(parsedSections).length > 0 ? parsedSections : caseSections;
+    const hasNoSections = Object.keys(finalCaseSections).length === 0;
+    const hasDescription = !!caseDescription;
+    
+    // If no sections found and we have a description, force regenerate
+    if (hasNoSections && hasDescription && !isGeneratingConcepts && !conceptGenerationRef.current) {
+      console.log("⚠️⚠️⚠️ No sections found in concept - FORCING REGENERATION");
+      console.log("⚠️ Description length:", caseDescription.length);
+      console.log("⚠️ Clearing existing concepts and regenerating...");
+      
+      // Clear the existing concepts for this case to force regeneration
+      setGeneratedConcepts((prev) => {
+        const updated = { ...prev };
+        delete updated[selectedCase];
+        return updated;
+      });
+      
+      // Clear the ref to allow regeneration
+      conceptGenerationRef.current = false;
+      
+      // Trigger regeneration by calling the API directly
+      const forceRegenerate = async () => {
+        try {
+          conceptGenerationRef.current = true;
+          setIsGeneratingConcepts(true);
+          setAutoLoadingProgress("🔄 Regenerating concepts (no sections found)...");
+          
+          const currentDocument = getCurrentChatDocument();
+          if (currentDocument) {
+            const conceptsResponse = await apiService.identifyConcepts(
+              currentDocument.id,
+              1,
+              selectedCase
+            );
+            
+            if (conceptsResponse.concepts && conceptsResponse.concepts.length > 0) {
+              setGeneratedConcepts((prev) => ({
+                ...prev,
+                [selectedCase]: conceptsResponse.concepts,
+              }));
+              
+              // Save to database
+              try {
+                const contentToSave = {
+                  concepts: conceptsResponse.concepts,
+                  case_title: selectedCase,
+                };
+                await apiService.saveGeneratedContent(activeChat, contentToSave);
+              } catch (error) {
+                console.error("❌ Failed to save regenerated concepts:", error);
+              }
+            }
+          }
+        } catch (error) {
+          console.error("❌ Failed to force regenerate concepts:", error);
+        } finally {
+          setIsGeneratingConcepts(false);
+          setAutoLoadingProgress("");
+          conceptGenerationRef.current = false;
+        }
+      };
+      
+      // Trigger regeneration
+      forceRegenerate();
+      
+      // Return loading state while regenerating
+      return (
+        <div className="flex-1 p-8 flex items-center justify-center">
+          <div className="text-center">
+            <div className="animate-spin rounded-full h-12 w-12 border-4 border-blue-200 border-t-blue-600 mx-auto mb-4"></div>
+            <h3 className="text-lg font-medium text-gray-900 mb-2">
+              Regenerating Case Breakdown
+            </h3>
+            <p className="text-gray-600">
+              No sections found in previous response. Regenerating with better formatting...
+            </p>
+          </div>
+        </div>
+      );
+    }
+    
+    // If still no sections after checking, use description as fallback
+    if (hasNoSections && hasDescription) {
+      console.log("⚠️ No sections found, using description as fallback");
+      finalCaseSections = { "Case Overview": caseDescription };
+    }
 
     return (
       <div className="flex-1 p-8 flex flex-col">

@@ -1273,11 +1273,16 @@ class ApiService {
     caseTitle?: string
   ): Promise<ConceptResponse> {
     console.log(
-      "🎯 Starting concept identification with enhanced timeout handling..."
+      "🎯🎯🎯 API: Starting concept identification with enhanced timeout handling..."
     );
-    console.log("📊 Document ID:", documentId);
-    console.log("📊 Number of concepts:", numConcepts);
-    console.log("📊 Case Title:", caseTitle);
+    console.log("📊 API: Document ID:", documentId);
+    console.log("📊 API: Number of concepts:", numConcepts);
+    console.log("📊 API: Case Title:", caseTitle);
+    console.log("📊 API: Request body will be:", {
+      document_id: documentId,
+      num_concepts: numConcepts,
+      case_title: caseTitle || null,
+    });
 
     // Use fetchWithRetry for robust timeout handling with retries
     const response = await this.fetchWithRetry(
@@ -1296,6 +1301,7 @@ class ApiService {
       180000, // 3 minutes timeout for concept identification (increased)
       3 // 3 retries (increased)
     );
+    console.log("📊 API: Response received, status:", response.status);
     return this.handleResponse<ConceptResponse>(response);
   }
 
