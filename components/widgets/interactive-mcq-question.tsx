@@ -347,7 +347,7 @@ export function InteractiveMCQQuestion({
                         Explain
                       </button>
                     )}
-                    {!isCorrect && (
+                    {!isCorrect && attempts < 3 && !isCompleted && (
                       <button
                         onClick={handleReset}
                         className="text-sm bg-gray-600 hover:bg-gray-700 text-white px-3 py-1 rounded"

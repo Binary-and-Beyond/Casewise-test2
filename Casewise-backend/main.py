@@ -3314,7 +3314,10 @@ async def identify_concepts(
                 
                 system_prompt = f"""Generate a single, comprehensive, multi-paragraph medical case breakdown that is DIRECTLY RELEVANT to the document content below. The case MUST be based on specific medical concepts, conditions, and information from the document - do not generate generic cases.{case_context}
 
-CRITICAL REQUIREMENTS:
+CRITICAL REQUIREMENTS - 100% ACCURACY MANDATORY:
+- ACCURACY IS PARAMOUNT: All medical information, facts, terminology, and clinical details MUST be 100% accurate and directly derived from the document content
+- Do NOT invent, assume, or extrapolate information not present in the document
+- All medical concepts, conditions, symptoms, and findings must be factually correct and based solely on the provided document
 - Each section must be DETAILED and MULTI-PARAGRAPH (not brief or single sentence)
 - The entire case breakdown should be comprehensive and educational
 - Each subsection must contain substantial detail (minimum 3-5 sentences per subsection)
@@ -3338,7 +3341,12 @@ Required Structure - The case MUST be structured with the following sections:
 
 Content: {document['content'][:3000]}
 
-CRITICAL: The case breakdown MUST be DIRECTLY RELEVANT to the document content above. Use specific medical concepts, conditions, and information from the document. Do not generate generic cases - base everything on the actual document content.
+CRITICAL ACCURACY REQUIREMENTS:
+- The case breakdown MUST be DIRECTLY RELEVANT to the document content above
+- Use ONLY specific medical concepts, conditions, and information that are explicitly stated or clearly implied in the document
+- Do not generate generic cases - base everything on the actual document content
+- Verify every medical fact, term, and detail against the document before including it
+- If information is not in the document, do NOT include it - accuracy is more important than completeness
 
 CRITICAL: You must respond with ONLY a valid JSON object (not an array). Do not include any markdown formatting, explanations, or additional text. Start your response directly with {{ and end with }}.
 
@@ -3380,12 +3388,13 @@ Requirements:
                 response = openai_client.chat.completions.create(
                     model="gpt-4o-mini",
                     messages=[
-                        {"role": "system", "content": "Medical educator. Generate a single comprehensive, multi-paragraph medical case breakdown with all required sections. Each section must be DETAILED and MULTI-PARAGRAPH with REAL, SPECIFIC medical content that is DIRECTLY RELEVANT to the document provided. NEVER use placeholders like [text] or [Patient demographics]. Generate actual patient information, symptoms, and medical details based on the document content. The case MUST reflect specific medical concepts from the document. Return JSON only."},
+                        {"role": "system", "content": "Medical educator. Generate a single comprehensive, multi-paragraph medical case breakdown with all required sections. Each section must be DETAILED and MULTI-PARAGRAPH with REAL, SPECIFIC medical content that is DIRECTLY RELEVANT to the document provided. NEVER use placeholders like [text] or [Patient demographics]. Generate actual patient information, symptoms, and medical details based on the document content. The case MUST reflect specific medical concepts from the document. CRITICAL: Ensure 100% accuracy - all medical information must be factually correct and directly derived from the document. Return valid JSON object only."},
                         {"role": "user", "content": system_prompt}
                     ],
-                    temperature=0.5,  # Reduced for faster, more focused generation
+                    temperature=0.1,  # Very low temperature for maximum accuracy and consistency
                     max_tokens=6000,  # Significantly increased for comprehensive multi-paragraph case generation
-                    timeout=180  # Increased timeout for comprehensive case generation
+                    timeout=180,  # Increased timeout for comprehensive case generation
+                    response_format={"type": "json_object"}  # Force JSON object format for better accuracy
                 )
                 
                 # Parse the response
@@ -4170,11 +4179,14 @@ Generate exactly {request.num_mcqs} questions."""
 Document Content:
 {document['content'][:3000]}
 
-CRITICAL REQUIREMENTS:
+CRITICAL REQUIREMENTS - 100% ACCURACY MANDATORY:
+- ACCURACY IS PARAMOUNT: All medical information, facts, terminology, and clinical details MUST be 100% accurate and directly derived from the document content
 - Concepts MUST be based on specific medical information from the document above
-- Use specific medical terminology, conditions, and details from the document
+- Use ONLY specific medical terminology, conditions, and details that are explicitly stated in the document
 - Do NOT generate generic concepts - every concept must reflect actual content from the document
+- Do NOT invent, assume, or extrapolate information not present in the document
 - Each concept description must be detailed and specific (minimum 100 characters)
+- Verify every medical fact against the document before including it
 
 Return JSON array:
 [{{"id": "concept_1", "title": "Specific Medical Concept from Document", "description": "Detailed concept description based on document content (minimum 100 characters)", "importance": "High|Medium|Low"}}]
@@ -4184,10 +4196,10 @@ Identify exactly {request.num_concepts} concepts that are directly relevant to t
                     concepts_response = openai_client.chat.completions.create(
                         model="gpt-4o-mini",
                         messages=[
-                            {"role": "system", "content": "You are an expert medical educator identifying key concepts. Always respond with valid JSON format. Concepts MUST be directly relevant to the document content provided."},
+                            {"role": "system", "content": "You are an expert medical educator identifying key concepts. Always respond with valid JSON array format. Concepts MUST be directly relevant to the document content provided. CRITICAL: Ensure 100% accuracy - all medical information must be factually correct and directly derived from the document. Do not generate generic or placeholder content."},
                             {"role": "user", "content": concepts_prompt}
                         ],
-                        temperature=0.7,
+                        temperature=0.4,  # Very low temperature for maximum accuracy and consistency
                         max_tokens=3000
                     )
                     print(f"🔄 Attempt {retry_count + 1} of {max_retries + 1} to generate concepts...")
