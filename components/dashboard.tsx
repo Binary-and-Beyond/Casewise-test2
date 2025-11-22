@@ -1,5 +1,11 @@
 "use client";
-import React, { useState, useEffect, useRef, useCallback } from "react";
+import React, {
+  useState,
+  useEffect,
+  useRef,
+  useCallback,
+  useMemo,
+} from "react";
 import Image from "next/image";
 import { useRouter, usePathname } from "next/navigation";
 
@@ -303,10 +309,15 @@ export function Dashboard({}: DashboardProps) {
     return {};
   });
   const [isGeneratingConcepts, setIsGeneratingConcepts] = useState(false);
+  const [isLoadingConcepts, setIsLoadingConcepts] = useState(false);
   const [isGeneratingMCQs, setIsGeneratingMCQs] = useState<string | null>(null);
   const conceptGenerationRef = useRef<boolean>(false);
   // Track if we've already auto-attempted MCQ generation for a case in this session
   const mcqAutoAttemptedRef = useRef<Set<string>>(new Set());
+  // Track if we've already auto-attempted concept generation for a case in this session
+  const conceptAutoAttemptedRef = useRef<Set<string>>(new Set());
+  // Track auto-selection to prevent infinite loops
+  const autoSelectRef = useRef<string | null>(null);
 
   // MCQ completion and navigation warning states
   const [showCompletionPopup, setShowCompletionPopup] = useState(false);
@@ -480,126 +491,91 @@ export function Dashboard({}: DashboardProps) {
   // Chat persistence is handled by localStorage and API calls
   // Removed automatic refresh to prevent unnecessary reloads
 
-  // Auto-select first case when entering identify-concepts view
+  // REMOVED: Auto-selection logic - users must manually select a case
+
+  // DISABLED: Auto-generation - users must click the "Generate Breakdown" button
+  // This prevents infinite loops and stuck states
+  // useEffect(() => {
+  //   // Auto-generation disabled - use manual button instead
+  // }, [currentView, selectedCase, activeChat]);
+
+  // Clear loading state if concepts exist but flag is still true
   useEffect(() => {
-    if (
-      currentView === "identify-concepts" &&
-      generatedCases.length > 0 &&
-      !selectedCase
-    ) {
-      console.log("🎯 Auto-selecting first case for identify-concepts view");
-      const firstCase = generatedCases[0];
-      setSelectedCaseWithPersistence(firstCase.title);
+    if (currentView === "identify-concepts" && selectedCase) {
+      const hasConcepts =
+        selectedCase &&
+        generatedConcepts[selectedCase] &&
+        generatedConcepts[selectedCase].length > 0;
+      if (hasConcepts && isGeneratingConcepts) {
+        console.log("🔧 Clearing stuck loading state - concepts exist");
+        setIsGeneratingConcepts(false);
+        setAutoLoadingProgress("");
+        conceptGenerationRef.current = false;
+      }
     }
-  }, [currentView, generatedCases, selectedCase]);
+  }, [currentView, selectedCase, generatedConcepts, isGeneratingConcepts]);
 
-  // Generate concepts on-demand when identify-concepts view is accessed
+  // Load concepts from database and auto-generate if needed when entering identify-concepts view
+  // This works like MCQs - loads fresh data every time and auto-generates if missing
   useEffect(() => {
-    console.log(`🔍 useEffect triggered - currentView: ${currentView}, selectedCase: ${selectedCase}`);
-    console.log(`🔍 generatedCases:`, generatedCases.map(c => ({ title: c.title, difficulty: c.difficulty })));
-    
-    // Check if this is an Easy case - force regeneration even if concepts exist
-    const caseDifficulty = selectedCase ? getCaseDifficulty(selectedCase) : "";
-    const isEasyCase = caseDifficulty.toLowerCase() === "easy";
-    const conceptsExist = selectedCase && generatedConcepts[selectedCase] && generatedConcepts[selectedCase].length > 0;
-    
-    // Also check if case title contains "easy" as a fallback
-    const titleContainsEasy = selectedCase && selectedCase.toLowerCase().includes("easy");
-    const finalIsEasyCase = isEasyCase || titleContainsEasy;
-    
-    console.log(`🔍 Case difficulty: ${caseDifficulty}, isEasyCase: ${isEasyCase}, titleContainsEasy: ${titleContainsEasy}, finalIsEasyCase: ${finalIsEasyCase}, conceptsExist: ${conceptsExist}`);
-    
-    // Force regeneration for Easy cases, or generate if concepts don't exist
-    const shouldGenerate = finalIsEasyCase || !conceptsExist;
-    
-    console.log(`🔍 shouldGenerate: ${shouldGenerate}, isGeneratingConcepts: ${isGeneratingConcepts}, conceptGenerationRef.current: ${conceptGenerationRef.current}`);
-    
-    if (
-      currentView === "identify-concepts" &&
-      selectedCase &&
-      shouldGenerate &&
-      !isGeneratingConcepts &&
-      !conceptGenerationRef.current
-    ) {
-      console.log(`✅ All conditions met, starting concept generation...`);
-      // Capture values for async function
-      const capturedIsEasyCase = finalIsEasyCase;
-      const capturedSelectedCase = selectedCase;
-      const generateConceptsOnDemand = async () => {
-        // Prevent multiple simultaneous calls
-        if (conceptGenerationRef.current) return;
+    if (currentView !== "identify-concepts") {
+      // Clear the attempted ref when leaving the view so it can regenerate on next visit
+      conceptAutoAttemptedRef.current.clear();
+      setIsLoadingConcepts(false);
+      return;
+    }
+    if (!selectedCase) {
+      setIsLoadingConcepts(false);
+      return;
+    }
+    if (!activeChat) {
+      setIsLoadingConcepts(false);
+      return;
+    }
 
-        conceptGenerationRef.current = true;
-        console.log(`🎯 Generating concepts on-demand... ${capturedIsEasyCase ? "(FORCING REGENERATION FOR EASY CASE)" : ""}`);
+    // Set loading state
+    setIsLoadingConcepts(true);
 
-        // Add a small delay to make the loading animation appear smoothly
-        setTimeout(() => {
-          setIsGeneratingConcepts(true);
-          setAutoLoadingProgress("📚 Generating key concepts...");
-        }, 50);
+    // Always reload concepts from database when entering the view (like MCQs do)
+    console.log("🔄 Loading concepts from database for identify-concepts view");
+    loadActiveChatContent(activeChat)
+      .then(() => {
+        // Check immediately if concepts exist (state might already be updated)
+        const checkConcepts = () => {
+          const hasConcepts =
+            generatedConcepts[selectedCase] &&
+            generatedConcepts[selectedCase].length > 0;
 
-        try {
-          const currentDocument = getCurrentChatDocument();
-          console.log(`🔵 Current document:`, currentDocument ? currentDocument.id : "NONE");
-          if (currentDocument) {
-            console.log(`🔵 About to call apiService.identifyConcepts with:`);
-            console.log(`🔵   - documentId: ${currentDocument.id}`);
-            console.log(`🔵   - numConcepts: 1`);
-            console.log(`🔵   - caseTitle: ${selectedCase}`);
-            
-            // Use the dedicated identify concepts API instead of autoGenerateContent
-            const conceptsResponse = await apiService.identifyConcepts(
-              currentDocument.id,
-              1, // Generate single case breakdown
-              capturedSelectedCase // Pass the case title to generate case-specific concepts
-            );
-
-            console.log("📊 Concepts response:", conceptsResponse);
-
-            if (
-              conceptsResponse.concepts &&
-              conceptsResponse.concepts.length > 0
-            ) {
-              // Store the full concept object for detailed display
-              setGeneratedConcepts((prev) => ({
-                ...prev,
-                [capturedSelectedCase]: conceptsResponse.concepts,
-              }));
-              console.log(
-                "✅ Case breakdown generated on-demand:",
-                conceptsResponse.concepts.length
-              );
-
-              // Save concepts to database
-              try {
-                const contentToSave = {
-                  concepts: conceptsResponse.concepts,
-                  case_title: capturedSelectedCase,
-                };
-                await apiService.saveGeneratedContent(
-                  activeChat,
-                  contentToSave
-                );
-                console.log("✅ Concepts saved to database");
-              } catch (error) {
-                console.error("❌ Failed to save concepts to database:", error);
-              }
-            } else {
-              console.log("❌ No concepts in response:", conceptsResponse);
-            }
+          if (hasConcepts) {
+            // Concepts found - clear loading immediately
+            setIsLoadingConcepts(false);
+            return;
           }
-        } catch (error) {
-          console.error("❌ Failed to generate concepts on-demand:", error);
-        } finally {
-          setIsGeneratingConcepts(false);
-          setAutoLoadingProgress("");
-          conceptGenerationRef.current = false;
-        }
-      };
 
-      generateConceptsOnDemand();
-    }
-  }, [currentView, selectedCase, isGeneratingConcepts, activeChat, generatedConcepts]);
+          // Concepts not found yet - clear loading and trigger generation
+          setIsLoadingConcepts(false);
+
+          // Auto-generate if concepts don't exist and we haven't already attempted
+          if (
+            !isGeneratingConcepts &&
+            !isUploading &&
+            !conceptAutoAttemptedRef.current.has(selectedCase)
+          ) {
+            conceptAutoAttemptedRef.current.add(selectedCase);
+            console.log("🎯 Auto-generating concepts for case:", selectedCase);
+            handleGenerateBreakdown();
+          }
+        };
+
+        // Check immediately, then once more after a short delay to catch async state updates
+        checkConcepts();
+        setTimeout(checkConcepts, 300);
+      })
+      .catch((error) => {
+        console.error("❌ Failed to load concepts:", error);
+        setIsLoadingConcepts(false);
+      });
+  }, [currentView, selectedCase, activeChat]);
 
   const loadUserChats = async () => {
     // Prevent multiple simultaneous calls
@@ -1456,29 +1432,81 @@ export function Dashboard({}: DashboardProps) {
 
   // Use generated concepts for the selected case if available, otherwise fall back to default concepts
   // Get concepts - now returns Concept objects, not strings
-  const conceptsRaw =
-    selectedCase &&
-    generatedConcepts[selectedCase] &&
-    generatedConcepts[selectedCase].length > 0
-      ? generatedConcepts[selectedCase]
-      : [];
+  // Use useMemo to ensure it updates when selectedCase or generatedConcepts changes
+  const conceptsRaw = useMemo(() => {
+    if (!selectedCase) return [];
+
+    // Try exact match first
+    if (
+      generatedConcepts[selectedCase] &&
+      generatedConcepts[selectedCase].length > 0
+    ) {
+      return generatedConcepts[selectedCase];
+    }
+
+    // Try case-insensitive match
+    const selectedCaseLower = selectedCase.toLowerCase().trim();
+    for (const [key, value] of Object.entries(generatedConcepts)) {
+      if (
+        key.toLowerCase().trim() === selectedCaseLower &&
+        value &&
+        value.length > 0
+      ) {
+        console.log(
+          `✅ Found concepts with case-insensitive match: "${key}" for "${selectedCase}"`
+        );
+        return value;
+      }
+    }
+
+    // Try partial match (selectedCase contains key or vice versa)
+    for (const [key, value] of Object.entries(generatedConcepts)) {
+      const keyLower = key.toLowerCase().trim();
+      if (
+        (selectedCaseLower.includes(keyLower) ||
+          keyLower.includes(selectedCaseLower)) &&
+        value &&
+        value.length > 0
+      ) {
+        console.log(
+          `✅ Found concepts with partial match: "${key}" for "${selectedCase}"`
+        );
+        return value;
+      }
+    }
+
+    // If still no match, try to find first available concept (fallback)
+    const firstAvailable = Object.values(generatedConcepts).find(
+      (concepts) => concepts && concepts.length > 0
+    );
+    if (firstAvailable) {
+      console.log(
+        `⚠️ Using first available concepts as fallback for "${selectedCase}"`
+      );
+      return firstAvailable;
+    }
+
+    return [];
+  }, [selectedCase, generatedConcepts]);
 
   // Ensure concepts are Concept objects (handle both old string format and new object format)
-  const concepts = conceptsRaw.map((item: any) => {
-    if (typeof item === "string") {
-      // Old format: string, convert to Concept object
-      const parts = item.split(":");
-      return {
-        id: `concept_${Math.random()}`,
-        title: parts[0] || "Concept",
-        description: parts.slice(1).join(":").trim() || item,
-        importance: "High",
-        difficulty: "Moderate",
-      };
-    }
-    // New format: already a Concept object
-    return item;
-  });
+  const concepts = useMemo(() => {
+    return conceptsRaw.map((item: any) => {
+      if (typeof item === "string") {
+        // Old format: string, convert to Concept object
+        const parts = item.split(":");
+        return {
+          id: `concept_${Math.random()}`,
+          title: parts[0] || "Concept",
+          description: parts.slice(1).join(":").trim() || item,
+          importance: "High",
+          difficulty: "Moderate",
+        };
+      }
+      // New format: already a Concept object
+      return item;
+    });
+  }, [conceptsRaw]);
 
   const handleFileUpload = async (
     event: React.ChangeEvent<HTMLInputElement>
@@ -3389,17 +3417,16 @@ export function Dashboard({}: DashboardProps) {
               }}
               onIdentifyConcepts={(title) => {
                 console.log(`🔵 Key Concepts clicked for case: ${title}`);
-                const caseDifficulty = getCaseDifficulty(title);
-                const isEasyCase = caseDifficulty.toLowerCase() === "easy";
-                console.log(`🔵 Case difficulty: ${caseDifficulty}, isEasyCase: ${isEasyCase}`);
                 setSelectedCaseWithPersistence(title);
-                // Clear the ref to allow regeneration, especially for Easy cases
+                // Clear the ref to allow generation
                 conceptGenerationRef.current = false;
                 if (!isGeneratingConcepts && !isUploading) {
                   console.log(`🔵 Navigating to identify-concepts view`);
                   navigateToView("identify-concepts");
                 } else {
-                  console.log(`🔵 Skipping navigation - isGeneratingConcepts: ${isGeneratingConcepts}, isUploading: ${isUploading}`);
+                  console.log(
+                    `🔵 Skipping navigation - isGeneratingConcepts: ${isGeneratingConcepts}, isUploading: ${isUploading}`
+                  );
                 }
               }}
               onExploreCase={(title) => {
@@ -3713,7 +3740,12 @@ export function Dashboard({}: DashboardProps) {
                   setCurrentViewWithPersistence("identify-concepts");
                 }
               }}
-              disabled={!selectedCase || isGeneratingMCQs === selectedCase || isGeneratingConcepts || isUploading}
+              disabled={
+                !selectedCase ||
+                isGeneratingMCQs === selectedCase ||
+                isGeneratingConcepts ||
+                isUploading
+              }
               className="px-6 py-3 border-2 border-blue-600 text-blue-600 bg-transparent rounded-lg hover:bg-blue-50 transition-colors font-medium shadow-sm hover:shadow-md flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <svg
@@ -3740,7 +3772,12 @@ export function Dashboard({}: DashboardProps) {
                   setCurrentViewWithPersistence("explore-cases");
                 }
               }}
-              disabled={!selectedCase || isGeneratingMCQs === selectedCase || isGeneratingConcepts || isUploading}
+              disabled={
+                !selectedCase ||
+                isGeneratingMCQs === selectedCase ||
+                isGeneratingConcepts ||
+                isUploading
+              }
               className="px-6 py-3 border-2 border-green-600 text-green-600 bg-transparent rounded-lg hover:bg-green-50 transition-colors font-medium shadow-sm hover:shadow-md flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <svg
@@ -3863,42 +3900,222 @@ export function Dashboard({}: DashboardProps) {
     );
   };
 
+  // Handler to manually generate case breakdown
+  const handleGenerateBreakdown = async () => {
+    if (!selectedCase) {
+      console.log("❌ No case selected");
+      return;
+    }
+
+    // Force clear any stuck states
+    if (conceptGenerationRef.current) {
+      console.log("🔧 Clearing stuck conceptGenerationRef");
+      conceptGenerationRef.current = false;
+    }
+    if (isGeneratingConcepts) {
+      console.log("🔧 Clearing stuck isGeneratingConcepts");
+      setIsGeneratingConcepts(false);
+    }
+
+    // Prevent if already generating
+    if (isGeneratingConcepts || conceptGenerationRef.current) {
+      console.log("⚠️ Already generating, skipping...");
+      return;
+    }
+
+    console.log("🚀 Starting manual concept generation for:", selectedCase);
+    conceptGenerationRef.current = true;
+    setIsGeneratingConcepts(true);
+    setAutoLoadingProgress("📚 Generating case breakdown...");
+
+    try {
+      const currentDocument = getCurrentChatDocument();
+      if (!currentDocument) {
+        console.error("❌ No document found");
+        throw new Error("No document available");
+      }
+
+      console.log(
+        `🔵 Calling identifyConcepts with documentId: ${currentDocument.id}, caseTitle: ${selectedCase}`
+      );
+      const conceptsResponse = await apiService.identifyConcepts(
+        currentDocument.id,
+        1,
+        selectedCase
+      );
+
+      console.log("📊 Concepts response received:", conceptsResponse);
+
+      if (conceptsResponse.concepts && conceptsResponse.concepts.length > 0) {
+        console.log(`✅ Received ${conceptsResponse.concepts.length} concepts`);
+
+        // Ensure case_title is set on each concept for proper storage and retrieval
+        const conceptsWithTitle = conceptsResponse.concepts.map(
+          (concept: any) => ({
+            ...concept,
+            case_title: selectedCase,
+          })
+        );
+
+        setGeneratedConcepts((prev) => ({
+          ...prev,
+          [selectedCase]: conceptsWithTitle,
+        }));
+
+        // Save to database with proper case_title
+        try {
+          const contentToSave = {
+            concepts: conceptsWithTitle,
+            case_title: selectedCase,
+          };
+          await apiService.saveGeneratedContent(activeChat, contentToSave);
+          console.log("✅ Case breakdown saved to database for:", selectedCase);
+          
+          // Reload concepts from database to ensure persistence
+          console.log("🔄 Reloading concepts from database after save...");
+          await loadActiveChatContent(activeChat);
+          console.log("✅ Concepts reloaded after save");
+        } catch (error) {
+          console.error("❌ Failed to save case breakdown:", error);
+        }
+
+        // Clear loading state after concepts are set
+        setIsLoadingConcepts(false);
+      } else {
+        console.error("❌ No concepts in response");
+        setIsLoadingConcepts(false);
+      }
+    } catch (error) {
+      console.error("❌ Failed to generate case breakdown:", error);
+      setIsLoadingConcepts(false);
+      alert(
+        `Failed to generate case breakdown: ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      );
+    } finally {
+      console.log("🔧 Clearing generation flags");
+      setIsGeneratingConcepts(false);
+      setAutoLoadingProgress("");
+      conceptGenerationRef.current = false;
+    }
+  };
+
   const renderIdentifyConcepts = () => {
+    // CRITICAL: Only run if we're actually on the identify-concepts view
+    // This prevents API calls when user is on other pages
+    if (currentView !== "identify-concepts") {
+      console.log(
+        "⚠️ renderIdentifyConcepts called but not on identify-concepts view, returning null"
+      );
+      return null;
+    }
+
     // If no chats exist, redirect to main view
     if (chats.length === 0) {
       navigateToView("main");
       return null;
     }
 
-    // Auto-select first case if no case is selected and cases are available
+    // If no case is selected, show case selection UI
     if (!selectedCase && generatedCases.length > 0) {
-      const firstCase = generatedCases[0];
-      console.log("🎯 Auto-selecting first case for identify-concepts view:", firstCase.title);
-      setSelectedCaseWithPersistence(firstCase.title);
-      // Return loading state while case is being selected
+      const cases = generatedCases.map((scenario) => ({
+        title: scenario.title,
+        difficulty: scenario.difficulty,
+        description: scenario.description,
+        key_points: scenario.key_points,
+      }));
+
       return (
-        <div className="flex-1 p-8">
-          <div className="text-center py-8">
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto mb-4"></div>
-            <p className="text-gray-600">Loading case...</p>
+        <div className="flex-1 p-8 flex flex-col">
+          <div className="mb-6">
+            {renderBackButton()}
+            <Breadcrumb
+              items={getDynamicBreadcrumbs()}
+              onNavigationAttempt={handleNavigationAttempt}
+            />
+          </div>
+
+          <div className="flex-1">
+            <div className="mb-6">
+              <h1 className="text-2xl font-semibold text-gray-900 mb-2">
+                Select a Case for Key Concepts
+              </h1>
+              <p className="text-gray-600">
+                Choose a case to view or generate its key concepts breakdown.
+              </p>
+            </div>
+
+            <CasesList
+              cases={cases}
+              onCaseSelect={(title) => {
+                setSelectedCaseWithPersistence(title);
+              }}
+              onIdentifyConcepts={(title) => {
+                setSelectedCaseWithPersistence(title);
+                // Will automatically show the generate button or content
+              }}
+              onExploreCase={(title) => {
+                setSelectedCaseWithPersistence(title);
+                setCurrentViewWithPersistence("explore-cases");
+              }}
+              onGenerateMCQs={(title) => {
+                setSelectedCaseWithPersistence(title);
+                setCurrentViewWithPersistence("generate-mcqs");
+              }}
+              disabled={isGeneratingConcepts || isUploading}
+            />
           </div>
         </div>
       );
     }
 
-    // If no case is selected and no cases available, show message
+    // If no case is selected and no cases available, show message with back button
     if (!selectedCase && generatedCases.length === 0) {
       return (
-        <div className="flex-1 p-8">
-          <div className="text-center py-12 text-gray-500">
-            <p>No cases available. Please generate cases first.</p>
+        <div className="flex-1 p-8 flex flex-col">
+          <div className="mb-6">
+            {renderBackButton()}
+            <Breadcrumb
+              items={getDynamicBreadcrumbs()}
+              onNavigationAttempt={handleNavigationAttempt}
+            />
+          </div>
+          <div className="flex-1 flex items-center justify-center">
+            <div className="text-center py-12 text-gray-500">
+              <p className="text-lg mb-4">No cases available.</p>
+              <p className="mb-6">
+                Please generate cases first from the main dashboard.
+              </p>
+              <button
+                onClick={() => navigateToView("main")}
+                className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium"
+              >
+                Go to Main Dashboard
+              </button>
+            </div>
           </div>
         </div>
+      );
+    }
+
+    // Use conceptsRaw (which already does flexible matching) to determine if concepts exist
+    // Check if concepts actually have content (not just empty arrays)
+    const hasConcepts =
+      conceptsRaw && conceptsRaw.length > 0 && concepts && concepts.length > 0;
+
+    // Debug log to help troubleshoot
+    if (selectedCase) {
+      console.log(
+        `🔍 Case "${selectedCase}" - hasConcepts: ${hasConcepts}, conceptsRaw.length: ${
+          conceptsRaw?.length || 0
+        }, concepts.length: ${concepts?.length || 0}`
       );
     }
 
     // Get the single case breakdown for the selected case
-    const caseBreakdown = concepts && concepts.length > 0 ? concepts[0] : null;
+    const caseBreakdown =
+      hasConcepts && concepts.length > 0 ? concepts[0] : null;
 
     // Check if we have new structured format (separate fields) or old format (description to parse)
     const hasStructuredFields =
@@ -3943,15 +4160,7 @@ export function Dashboard({}: DashboardProps) {
 
     const caseDescription = caseBreakdown?.description || "";
 
-    console.log("🔍 Identify Concepts Debug:", {
-      conceptsLength: concepts?.length,
-      caseBreakdown: caseBreakdown,
-      hasStructuredFields,
-      hasDescription: !!caseDescription,
-      descriptionLength: caseDescription.length,
-      selectedCase,
-      sectionsFound: Object.keys(caseSections),
-    });
+    // Simplified debug - removed excessive logging
 
     // Parse the description into sections - only if we don't have structured fields
     const parseCaseDescription = (description: string) => {
@@ -4102,13 +4311,7 @@ export function Dashboard({}: DashboardProps) {
         sections[currentSection] = currentContent.join("\n").trim();
       }
 
-      console.log("📋 Parsed sections:", Object.keys(sections));
-      console.log(
-        "📋 Section contents preview:",
-        Object.keys(sections).map(
-          (k) => `${k}: ${sections[k].substring(0, 100)}...`
-        )
-      );
+      // Removed excessive parsing logs
 
       return sections;
     };
@@ -4117,92 +4320,13 @@ export function Dashboard({}: DashboardProps) {
     const parsedSections = hasStructuredFields
       ? caseSections
       : parseCaseDescription(caseDescription);
-    
-    // If no sections were found from parsing and we have a description, check if we should regenerate
-    let finalCaseSections = Object.keys(parsedSections).length > 0 ? parsedSections : caseSections;
-    const hasNoSections = Object.keys(finalCaseSections).length === 0;
-    const hasDescription = !!caseDescription;
-    
-    // If no sections found and we have a description, force regenerate
-    if (hasNoSections && hasDescription && !isGeneratingConcepts && !conceptGenerationRef.current) {
-      console.log("⚠️⚠️⚠️ No sections found in concept - FORCING REGENERATION");
-      console.log("⚠️ Description length:", caseDescription.length);
-      console.log("⚠️ Clearing existing concepts and regenerating...");
-      
-      // Clear the existing concepts for this case to force regeneration
-      setGeneratedConcepts((prev) => {
-        const updated = { ...prev };
-        delete updated[selectedCase];
-        return updated;
-      });
-      
-      // Clear the ref to allow regeneration
-      conceptGenerationRef.current = false;
-      
-      // Trigger regeneration by calling the API directly
-      const forceRegenerate = async () => {
-        try {
-          conceptGenerationRef.current = true;
-          setIsGeneratingConcepts(true);
-          setAutoLoadingProgress("🔄 Regenerating concepts (no sections found)...");
-          
-          const currentDocument = getCurrentChatDocument();
-          if (currentDocument) {
-            const conceptsResponse = await apiService.identifyConcepts(
-              currentDocument.id,
-              1,
-              selectedCase
-            );
-            
-            if (conceptsResponse.concepts && conceptsResponse.concepts.length > 0) {
-              setGeneratedConcepts((prev) => ({
-                ...prev,
-                [selectedCase]: conceptsResponse.concepts,
-              }));
-              
-              // Save to database
-              try {
-                const contentToSave = {
-                  concepts: conceptsResponse.concepts,
-                  case_title: selectedCase,
-                };
-                await apiService.saveGeneratedContent(activeChat, contentToSave);
-              } catch (error) {
-                console.error("❌ Failed to save regenerated concepts:", error);
-              }
-            }
-          }
-        } catch (error) {
-          console.error("❌ Failed to force regenerate concepts:", error);
-        } finally {
-          setIsGeneratingConcepts(false);
-          setAutoLoadingProgress("");
-          conceptGenerationRef.current = false;
-        }
-      };
-      
-      // Trigger regeneration
-      forceRegenerate();
-      
-      // Return loading state while regenerating
-      return (
-        <div className="flex-1 p-8 flex items-center justify-center">
-          <div className="text-center">
-            <div className="animate-spin rounded-full h-12 w-12 border-4 border-blue-200 border-t-blue-600 mx-auto mb-4"></div>
-            <h3 className="text-lg font-medium text-gray-900 mb-2">
-              Regenerating Case Breakdown
-            </h3>
-            <p className="text-gray-600">
-              No sections found in previous response. Regenerating with better formatting...
-            </p>
-          </div>
-        </div>
-      );
-    }
-    
-    // If still no sections after checking, use description as fallback
-    if (hasNoSections && hasDescription) {
-      console.log("⚠️ No sections found, using description as fallback");
+
+    // Use parsed sections or case sections
+    let finalCaseSections =
+      Object.keys(parsedSections).length > 0 ? parsedSections : caseSections;
+
+    // If no sections found, use description as fallback - always show content
+    if (Object.keys(finalCaseSections).length === 0 && caseDescription) {
       finalCaseSections = { "Case Overview": caseDescription };
     }
 
@@ -4217,17 +4341,21 @@ export function Dashboard({}: DashboardProps) {
         </div>
 
         <div className="flex-1 flex flex-col">
-          {isGeneratingConcepts ? (
+          {isLoadingConcepts || (isGeneratingConcepts && !hasConcepts) ? (
             <div className="flex-1 flex items-center justify-center animate-fade-in">
               <div className="text-center max-w-md">
                 <div className="relative">
                   <div className="animate-spin rounded-full h-12 w-12 border-4 border-blue-200 border-t-blue-600 mx-auto mb-6"></div>
                 </div>
                 <h3 className="text-lg font-medium text-gray-900 mb-2">
-                  Generating Case Breakdown
+                  {isLoadingConcepts
+                    ? "Loading Key Concepts"
+                    : "Generating Case Breakdown"}
                 </h3>
                 <p className="text-gray-600 mb-4">
-                  Analyzing your document to create a detailed case breakdown...
+                  {isLoadingConcepts
+                    ? "Loading concepts from database..."
+                    : "Analyzing your document to create a detailed case breakdown..."}
                 </p>
                 <div className="w-full bg-gray-200 rounded-full h-2 overflow-hidden">
                   <div
@@ -4240,13 +4368,114 @@ export function Dashboard({}: DashboardProps) {
                 </p>
               </div>
             </div>
+          ) : !hasConcepts ? (
+            <div className="flex-1 flex items-center justify-center">
+              <div className="text-center max-w-md">
+                <div className="mb-6">
+                  <svg
+                    className="mx-auto h-16 w-16 text-blue-600"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
+                    />
+                  </svg>
+                </div>
+                <h3 className="text-xl font-semibold text-gray-900 mb-2">
+                  Generate Case Breakdown
+                </h3>
+                <p className="text-gray-600 mb-6">
+                  Click the button below to generate a detailed case breakdown
+                  for <span className="font-medium">{selectedCase}</span>
+                </p>
+                {isGeneratingConcepts && (
+                  <div className="mb-4 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
+                    <p className="text-sm text-yellow-800">
+                      ⚠️ Generation in progress... If stuck, try refreshing the
+                      page.
+                    </p>
+                  </div>
+                )}
+                <button
+                  onClick={handleGenerateBreakdown}
+                  disabled={isGeneratingConcepts || !selectedCase}
+                  className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium shadow-md disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center mx-auto"
+                >
+                  {isGeneratingConcepts ? (
+                    <>
+                      <div className="animate-spin rounded-full h-5 w-5 border-2 border-white border-t-transparent mr-2"></div>
+                      Generating...
+                    </>
+                  ) : (
+                    <>
+                      <svg
+                        className="w-5 h-5 mr-2"
+                        fill="none"
+                        stroke="currentColor"
+                        viewBox="0 0 24 24"
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth={2}
+                          d="M13 10V3L4 14h7v7l9-11h-7z"
+                        />
+                      </svg>
+                      Generate Breakdown
+                    </>
+                  )}
+                </button>
+                {isGeneratingConcepts && (
+                  <button
+                    onClick={() => {
+                      console.log("🔧 Force clearing stuck state");
+                      setIsGeneratingConcepts(false);
+                      setAutoLoadingProgress("");
+                      conceptGenerationRef.current = false;
+                    }}
+                    className="mt-4 px-4 py-2 text-sm text-gray-600 hover:text-gray-800 underline"
+                  >
+                    Clear Stuck State
+                  </button>
+                )}
+              </div>
+            </div>
           ) : caseBreakdown ? (
             <div className="space-y-6">
               {/* Title Banner - Blue bar at top */}
-              <div className="bg-blue-600 text-white px-6 py-4 rounded-lg">
+              <div className="bg-blue-600 text-white px-6 py-4 rounded-lg flex items-center justify-between">
                 <h1 className="text-2xl font-semibold">
                   {selectedCase || caseBreakdown.title || "Case Breakdown"}
                 </h1>
+                <button
+                  onClick={handleGenerateBreakdown}
+                  disabled={isGeneratingConcepts || !selectedCase}
+                  className="p-2 rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  title="Regenerate Case Breakdown"
+                >
+                  {isGeneratingConcepts ? (
+                    <div className="animate-spin rounded-full h-5 w-5 border-2 border-white border-t-transparent"></div>
+                  ) : (
+                    <svg
+                      className="w-5 h-5"
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+                      />
+                    </svg>
+                  )}
+                </button>
               </div>
 
               {/* Case Breakdown Content */}

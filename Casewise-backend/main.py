@@ -3184,6 +3184,8 @@ async def identify_concepts(
 ):
     """Identify key medical concepts from a document using OpenAI GPT-4 mini"""
     
+    print(f"🔵🔵🔵 identify_concepts endpoint called - document_id: {request.document_id}, case_title: '{request.case_title}', num_concepts: {request.num_concepts}")
+    
     if not OPENAI_API_KEY:
         raise HTTPException(status_code=500, detail="OpenAI API key not configured")
     
@@ -3207,10 +3209,8 @@ async def identify_concepts(
     case_details = None
     case_demographics = ""
     case_difficulty = None
-    is_easy_case = False
-    is_first_case = not request.case_title or (request.case_title and not request.case_title.strip())
     
-    print(f"🔍 Concept generation - case_title: '{request.case_title}', is_first_case: {is_first_case}")
+    print(f"🔍 Concept generation - case_title: '{request.case_title}'")
     
     if request.case_title:
         import re
@@ -3244,12 +3244,6 @@ async def identify_concepts(
                 case_description = case_doc.get("description", "")
                 case_difficulty = case_doc.get("difficulty", "").strip()
                 
-                # Check if this is an Easy case - force regeneration
-                if case_difficulty and case_difficulty.lower() == "easy":
-                    is_easy_case = True
-                    print(f"🎯🎯🎯 EASY CASE DETECTED: '{request.case_title}' with difficulty '{case_difficulty}'")
-                    print(f"🎯 EASY CASE: Will force regenerate with ZERO validation - accepting any response")
-                
                 # Extract from description if not found in title
                 if not age:
                     age_match = re.search(r'(\d+)[-\s]year[-\s]old', case_description, re.IGNORECASE)
@@ -3261,13 +3255,9 @@ async def identify_concepts(
             print(f"⚠️ Warning: Could not fetch case details from database: {e}")
             # Continue with title-based extraction
         
-        # If case not found in DB, check if it might be Easy based on common patterns
-        # First case is typically Easy, so if no case_title, assume Easy
-        if not case_doc and is_first_case:
-            is_easy_case = True
-            print(f"🎯 Assuming first case is Easy (no case_title) - Will force regenerate")
-        
-        print(f"🔍 Final check - is_easy_case: {is_easy_case}, is_first_case: {is_first_case}, case_difficulty: {case_difficulty}")
+        print(f"🔍 Case details - case_difficulty: '{case_difficulty}' (type: {type(case_difficulty)})")
+        if not case_difficulty:
+            print(f"⚠️ WARNING: case_difficulty is None/empty - will use lenient validation (treating as potentially Easy/first case)")
         
         # Build demographics string
         if age and gender:
@@ -3303,92 +3293,54 @@ async def identify_concepts(
                 # Create the prompt for concept identification - generate 1 detailed case breakdown
                 case_context = ""
                 if request.case_title:
-                    easy_case_note = ""
-                    if is_easy_case:
-                        easy_case_note = "\n\nCRITICAL FOR EASY CASE: You MUST return ALL structured fields (objective, patient_profile, history_of_present_illness, past_medical_history, medications, examination, initial_investigations, case_progression, final_diagnosis) as separate JSON keys. Do NOT put everything in a single 'description' field. Each field must contain detailed, multi-paragraph content."
-                    
+                    # Simplified prompt - just generate key concepts with headings
                     if case_demographics:
-                        case_context = f"\n\nCRITICAL: Generate a case breakdown specifically for this case: '{request.case_title}'.{case_demographics}\n\nThe breakdown MUST be directly related to this specific case scenario, not generic concepts from the document. Focus on the medical concepts, patient presentation, and clinical details relevant to this specific case. Maintain strict consistency with the patient demographics provided above.{easy_case_note}"
+                        case_context = f"\n\nGenerate key concepts for this case: '{request.case_title}'.{case_demographics}\n\nBreak down the case into clear sections with headings. Include: Objective, Patient Profile, History, Examination, Investigations, Diagnosis, and Key Learning Points. Use simple, clear headings and provide detailed content for each section."
                     else:
-                        case_context = f"\n\nCRITICAL: Generate a case breakdown specifically for this case: '{request.case_title}'. The breakdown MUST be directly related to this specific case scenario, not generic concepts from the document. Focus on the medical concepts, patient presentation, and clinical details relevant to this specific case.{easy_case_note}"
+                        case_context = f"\n\nGenerate key concepts for this case: '{request.case_title}'. Break down the case into clear sections with headings. Include: Objective, Patient Profile, History, Examination, Investigations, Diagnosis, and Key Learning Points. Use simple, clear headings and provide detailed content for each section."
                 
-                system_prompt = f"""Generate a single, comprehensive, multi-paragraph medical case breakdown that is DIRECTLY RELEVANT to the document content below. The case MUST be based on specific medical concepts, conditions, and information from the document - do not generate generic cases.{case_context}
+                # Simplified prompt - just generate key concepts with headings
+                system_prompt = f"""Generate key concepts for a medical case based on the document content below.{case_context}
 
-CRITICAL REQUIREMENTS - 100% ACCURACY MANDATORY:
-- ACCURACY IS PARAMOUNT: All medical information, facts, terminology, and clinical details MUST be 100% accurate and directly derived from the document content
-- Do NOT invent, assume, or extrapolate information not present in the document
-- All medical concepts, conditions, symptoms, and findings must be factually correct and based solely on the provided document
-- Each section must be DETAILED and MULTI-PARAGRAPH (not brief or single sentence)
-- The entire case breakdown should be comprehensive and educational
-- Each subsection must contain substantial detail (minimum 3-5 sentences per subsection)
+Break down the case into clear sections with these headings:
+- Objective
+- Patient Profile  
+- History of Present Illness
+- Past Medical History
+- Medications
+- Examination
+- Initial Investigations
+- Case Progression
+- Final Diagnosis
 
-Required Structure - The case MUST be structured with the following sections:
+For each section, provide detailed, relevant content based on the document. Use real medical information from the document.
 
-1. Objective: A comprehensive paragraph (4-6 sentences) explaining what this case explores, the key learning objectives, and why this case is important for medical education. Include the clinical significance and educational value.
+Document Content: {document['content'][:4000]}
 
-2. Case Presentation with the following DETAILED subsections:
-   - Patient Profile: Detailed patient demographics including Age, Gender, occupation, relevant social history, and a comprehensive description of the presenting complaint (3-4 sentences minimum). CRITICAL: If a specific case was selected, the Age and Gender in the Patient Profile MUST EXACTLY match the demographics from the selected case (e.g., if the case is about an 8-year-old girl, the Patient Profile must describe an 8-year-old girl, NOT a 12-year-old male or any other age/gender combination).
-   - History of Present Illness: A detailed, complex, multi-paragraph history of present illness (minimum 5-7 sentences) describing the timeline, progression, associated symptoms, and patient's experience
-   - Past Medical History: Comprehensive list of relevant past medical conditions with details about each condition, duration, and current status (3-4 sentences minimum)
-   - Medications: Detailed current medications list with dosages, frequency, duration of use, and indication for each medication (2-3 sentences minimum)
-   - Examination: Comprehensive, detailed physical examination findings including vital signs, general appearance, system-by-system examination with specific positive and negative findings (minimum 6-8 sentences)
-
-3. Initial Investigations: A detailed, comprehensive list of ordered diagnostic tests (e.g., Labs, Imaging, ECG) with specific test names, results, reference ranges, and interpretation. Explain what each result means and how it points toward the diagnosis (minimum 5-6 sentences).
-
-4. Case Progression/Intervention: A detailed, multi-paragraph description of how the case evolves (e.g., patient stabilizes, new symptom emerges, treatment is initiated, response to treatment). Include timeline, interventions, and patient response (minimum 4-5 sentences).
-
-5. Final Diagnosis/Learning Anchor: The final, definitive diagnosis with detailed explanation, and a comprehensive statement of the core learning objective or principle this case is designed to illustrate. Include pathophysiology, clinical reasoning, and key takeaways (minimum 4-5 sentences).
-
-Content: {document['content'][:3000]}
-
-CRITICAL ACCURACY REQUIREMENTS:
-- The case breakdown MUST be DIRECTLY RELEVANT to the document content above
-- Use ONLY specific medical concepts, conditions, and information that are explicitly stated or clearly implied in the document
-- Do not generate generic cases - base everything on the actual document content
-- Verify every medical fact, term, and detail against the document before including it
-- If information is not in the document, do NOT include it - accuracy is more important than completeness
-
-CRITICAL: You must respond with ONLY a valid JSON object (not an array). Do not include any markdown formatting, explanations, or additional text. Start your response directly with {{ and end with }}.
-
-Return JSON with a single case object with SEPARATE KEYS for each section:
+Return a JSON object with these fields:
 {{
   "id": "concept_1",
-  "title": "Case Title WITHOUT case numbers (e.g., 'The Phantom Limb Pain Puzzle' - NOT 'Case 1: The Phantom Limb Pain Puzzle')",
-  "objective": "[4-6 sentence comprehensive objective paragraph explaining what this case explores, key learning objectives, and why this case is important for medical education]",
-  "patient_profile": "[Detailed patient demographics including Age, Gender, occupation, relevant social history, and comprehensive description of presenting complaint - 3-4 sentences minimum]",
-  "history_of_present_illness": "[Comprehensive detailed history of present illness - minimum 5-7 sentences describing timeline, progression, associated symptoms, and patient's experience]",
-  "past_medical_history": "[Comprehensive list of relevant past medical conditions with details about each condition, duration, and current status - 3-4 sentences minimum]",
-  "medications": "[Detailed current medications list with dosages, frequency, duration of use, and indication for each medication - 2-3 sentences minimum]",
-  "examination": "[Comprehensive, detailed physical examination findings including vital signs, general appearance, system-by-system examination with specific positive and negative findings - minimum 6-8 sentences]",
-  "initial_investigations": "[Detailed, comprehensive list of ordered diagnostic tests (e.g., Labs, Imaging, ECG) with specific test names, results, reference ranges, and interpretation. Explain what each result means and how it points toward the diagnosis - minimum 5-6 sentences]",
-  "case_progression": "[Detailed, multi-paragraph description of how the case evolves (e.g., patient stabilizes, new symptom emerges, treatment is initiated, response to treatment). Include timeline, interventions, and patient response - minimum 4-5 sentences]",
-  "final_diagnosis": "[The final, definitive diagnosis with detailed explanation, and comprehensive statement of the core learning objective or principle this case is designed to illustrate. Include pathophysiology, clinical reasoning, and key takeaways - minimum 4-5 sentences]",
-  "importance": "High",
-  "difficulty": "Easy|Moderate|Hard"
+  "title": "{request.case_title if request.case_title else 'Medical Case'}",
+  "objective": "Detailed objective paragraph",
+  "patient_profile": "Patient demographics and presenting complaint",
+  "history_of_present_illness": "Detailed history",
+  "past_medical_history": "Relevant past medical conditions",
+  "medications": "Current medications",
+  "examination": "Physical examination findings",
+  "initial_investigations": "Diagnostic tests and results",
+  "case_progression": "How the case evolves",
+  "final_diagnosis": "Final diagnosis and key learning points",
+  "importance": "High"
 }}
 
-CRITICAL FORMATTING RULES - NO PLACEHOLDERS ALLOWED:
-- Each field MUST contain ACTUAL, REAL CONTENT - NEVER use placeholders like [text], [Patient demographics], [Detailed history], etc.
-- ALL placeholders are FORBIDDEN - you must generate real, specific medical content
-- Use \\n for line breaks within text fields
-- All fields are REQUIRED and must contain substantial, detailed content (minimum 50-100 words per field)
-- Do NOT include section headers (like "Objective:" or "Patient Profile:") in the field values - just the content
-- Generate REAL patient information, REAL symptoms, REAL medical history - not template text
-
-Requirements:
-- Generate exactly 1 comprehensive, detailed case
-- Each section must be MULTI-PARAGRAPH and DETAILED (not brief)
-- Case must have all required sections with substantial content
-- Case must be detailed, medically plausible, and educational
-- Return valid JSON object only (single {{}}), no markdown, no array brackets
-- Use the EXACT field names as shown above (objective, patient_profile, history_of_present_illness, etc.)"""
+Return ONLY valid JSON, no markdown formatting."""
         
                 # Generate response from OpenAI
                 print(f"🔄 Attempt {retry_count + 1} of {max_retries + 1} to generate concepts...")
                 response = openai_client.chat.completions.create(
                     model="gpt-4o-mini",
                     messages=[
-                        {"role": "system", "content": "Medical educator. Generate a single comprehensive, multi-paragraph medical case breakdown with all required sections. Each section must be DETAILED and MULTI-PARAGRAPH with REAL, SPECIFIC medical content that is DIRECTLY RELEVANT to the document provided. NEVER use placeholders like [text] or [Patient demographics]. Generate actual patient information, symptoms, and medical details based on the document content. The case MUST reflect specific medical concepts from the document. CRITICAL: Ensure 100% accuracy - all medical information must be factually correct and directly derived from the document. Return valid JSON object only."},
+                        {"role": "system", "content": "Medical educator. Generate key concepts for a medical case with clear sections. Return valid JSON only."},
                         {"role": "user", "content": system_prompt}
                     ],
                     temperature=0.1,  # Very low temperature for maximum accuracy and consistency
@@ -3459,40 +3411,7 @@ Requirements:
                     print(f"❌ ERROR: Empty concepts_data after parsing")
                     raise ValueError("No concepts found in parsed JSON")
                 
-                # CRITICAL: For Easy cases or first case, accept IMMEDIATELY before any validation
-                if concepts_data and len(concepts_data) > 0:
-                    first_concept = concepts_data[0]
-                    
-                    # Check immediately if this is Easy or first case - accept right away
-                    if is_easy_case or is_first_case:
-                        case_type = "EASY CASE" if is_easy_case else "FIRST CASE"
-                        print(f"🔍 Checking {case_type} for immediate acceptance...")
-                        
-                        has_title = bool(first_concept.get("title", "").strip()) or bool(first_concept.get("id", "").strip())
-                        description = first_concept.get("description", "")
-                        has_any_content = bool(
-                            description or
-                            first_concept.get("objective") or 
-                            first_concept.get("patient_profile") or 
-                            first_concept.get("history_of_present_illness") or
-                            first_concept.get("importance")
-                        )
-                        
-                        print(f"🔍 {case_type} check - has_title: {has_title}, has_any_content: {has_any_content}, description_length: {len(description) if description else 0}")
-                        
-                        if has_title or has_any_content:
-                            print(f"🎯🎯🎯 {case_type}: ACCEPTING IMMEDIATELY - Skipping ALL validation")
-                            print(f"✅ {case_type} accepted - Title: {first_concept.get('title', first_concept.get('id', 'N/A'))}")
-                            print(f"✅ Has title: {has_title}, Has content: {has_any_content}, Description length: {len(description) if description else 0}")
-                            # For Easy cases, accept even if only description exists (no structured fields needed)
-                            if is_easy_case and description and not has_title:
-                                print(f"✅ EASY CASE: Accepting with description only (no structured fields required)")
-                            break  # Accept immediately - skip ALL validation for Easy/first case
-                        else:
-                            print(f"⚠️ {case_type}: No title/id and no content, will retry...")
-                            raise ValueError(f"{case_type} has no content at all")
-                
-                # For non-Easy/non-first cases, do normal validation
+                # Validate the response - common validation for all cases
                 if concepts_data and len(concepts_data) > 0:
                     first_concept = concepts_data[0]
                     description = first_concept.get("description", "")
@@ -3536,8 +3455,17 @@ Requirements:
                     
                     # Only check for generic descriptions if we don't have structured fields
                     # (structured fields indicate proper case breakdown format)
-                    # Skip this check for first case or Easy case to be more lenient
-                    if not has_structured_fields and description and not is_first_case and not is_easy_case:
+                    # Skip this check for Easy case to be more lenient
+                    # Also check if it's the first case (might not have difficulty set yet)
+                    is_easy_case = False
+                    if case_difficulty:
+                        is_easy_case = case_difficulty.lower().strip() == "easy"
+                    # Also check if it's likely the first case (no difficulty set, or first in list)
+                    # If case_difficulty is None, be lenient (might be first case)
+                    if not case_difficulty:
+                        print(f"⚠️ No case_difficulty found - treating as potentially Easy/first case (lenient validation)")
+                        is_easy_case = True  # Be lenient if difficulty not found
+                    if not has_structured_fields and description and not is_easy_case:
                         generic_phrases = [
                             "systematic review investigates",
                             "this study examines",
@@ -3570,6 +3498,7 @@ Requirements:
                             raise ValueError("Description is too generic and lacks specific case details")
                     
                     # Check if we have structured fields with substantial real content
+                    # For Easy cases, be more lenient with content length requirements
                     content_length = 0
                     structured_fields_present = False
                     
@@ -3614,49 +3543,20 @@ Requirements:
                     if description:
                         content_length += len(description)
                     
-                    # Require minimum content - be EXTREMELY lenient to avoid false rejections
-                    # Accept ANY content that has a title and at least some content
-                    # If structured fields are present, require at least 30 chars (very lenient)
-                    # If only description, require 50 chars
-                    min_required = 30 if structured_fields_present else 50
-                    
-                    # Also check if we have at least a title (minimum requirement)
+                    # Very lenient validation - just check we have some content
+                    # For Easy cases, be even more lenient - accept if we have title or any field
                     has_title = bool(first_concept.get("title", "").strip())
                     
-                    # For first case or Easy case, be EXTREMELY lenient - accept ANY response with a title
-                    # is_first_case and is_easy_case are already defined at function level
-                    if is_first_case or is_easy_case:
-                        min_required = 10  # Extremely lenient - just need a title and minimal content
-                        print(f"📌 First case detected - using EXTREMELY lenient validation (min: {min_required} chars)")
-                        # For first case, if we have a title, accept it regardless of content length
-                        if has_title:
-                            print(f"✅ First case: Accepting response with title '{first_concept.get('title', 'N/A')}' and {content_length} chars of content")
-                            print(f"✅ Validated real content: {content_length} characters (structured fields: {structured_fields_present}, first_case: {is_first_case})")
-                            print(f"✅ Final concepts_data length: {len(concepts_data)}")
-                            print(f"✅ Concept title: {first_concept.get('title', 'N/A')}")
-                            print(f"✅ Has objective: {bool(first_concept.get('objective'))}")
-                            print(f"✅ Has patient_profile: {bool(first_concept.get('patient_profile'))}")
-                            break  # Success, exit retry loop
-                    
-                    # For non-first cases, check content length
-                    if has_title and content_length >= min_required:
-                        print(f"✅ Validated real content: {content_length} characters (structured fields: {structured_fields_present}, first_case: {is_first_case})")
+                    # Accept if we have any content at all - be very lenient
+                    # No minimum content requirement - accept any content
+                    if content_length > 0 or has_title or has_structured_fields:
+                        print(f"✅ Validated content: {content_length} characters (structured fields: {structured_fields_present}, Easy case: {is_easy_case})")
                         print(f"✅ Final concepts_data length: {len(concepts_data)}")
                         print(f"✅ Concept title: {first_concept.get('title', 'N/A')}")
-                        print(f"✅ Has objective: {bool(first_concept.get('objective'))}")
-                        print(f"✅ Has patient_profile: {bool(first_concept.get('patient_profile'))}")
                         break  # Success, exit retry loop
                     else:
-                        print(f"⚠️ WARNING: Content insufficient ({content_length} chars, required: {min_required}, has_title: {has_title}, first_case: {is_first_case}), will retry...")
-                        print(f"⚠️ DEBUG - Structured fields present: {structured_fields_present}")
-                        print(f"⚠️ DEBUG - Objective length: {len(first_concept.get('objective', ''))}")
-                        print(f"⚠️ DEBUG - Patient profile length: {len(first_concept.get('patient_profile', ''))}")
-                        print(f"⚠️ DEBUG - Description length: {len(description)}")
-                        print(f"⚠️ DEBUG - Title: {first_concept.get('title', 'N/A')}")
-                        print(f"⚠️ DEBUG - Full concept keys: {list(first_concept.keys())}")
-                        if not has_title:
-                            raise ValueError(f"Missing title in response")
-                        raise ValueError(f"Content too short: {content_length} characters (minimum: {min_required})")
+                        print(f"⚠️ WARNING: No content found (content_length: {content_length}), will retry...")
+                        raise ValueError("No content found in response")
                 
             except (json.JSONDecodeError, ValueError, Exception) as e:
                 last_error = e
@@ -5156,8 +5056,17 @@ async def save_generated_content(
                 }
                 db.generated_mcqs.insert_one(mcq_doc)
         
-        # Save concepts
+        # Save concepts - delete old concepts for this case_title first to prevent duplicates
         if content.get("concepts"):
+            case_title = content.get("case_title")
+            if case_title:
+                # Delete existing concepts for this case_title to prevent duplicates
+                delete_result = db.generated_concepts.delete_many({
+                    "chat_id": chat_id,
+                    "case_title": case_title
+                })
+                print(f"🗑️ Deleted {delete_result.deleted_count} old concepts for case_title: '{case_title}'")
+            
             for concept in content["concepts"]:
                 concept_doc = {
                     "chat_id": chat_id,
@@ -5165,10 +5074,11 @@ async def save_generated_content(
                     "case_title": content.get("case_title"),
                     "title": concept["title"],
                     "description": concept["description"],
-                    "importance": concept["importance"],
+                    "importance": concept.get("importance", "medium"),  # Default importance if not provided
                     "created_at": datetime.utcnow()
                 }
                 db.generated_concepts.insert_one(concept_doc)
+            print(f"✅ Saved {len(content['concepts'])} concepts for case_title: '{case_title}'")
         
         print(f"✅ Saved generated content for chat {chat_id}")
         return {"message": "Content saved successfully"}
