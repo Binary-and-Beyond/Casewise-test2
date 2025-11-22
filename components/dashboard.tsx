@@ -2583,10 +2583,10 @@ export function Dashboard({}: DashboardProps) {
   const testAPIConnectivity = async () => {
     console.log("Testing API connectivity...");
     try {
-      // Using localhost:8000 for local development
-      // TODO: Uncomment the line below and comment out the hardcoded URL when deploying
-      // const apiUrl = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000";
-      const apiUrl = "http://localhost:8000";
+      // Using Render backend URL
+      const apiUrl =
+        process.env.NEXT_PUBLIC_API_BASE_URL ||
+        "https://casewise-backend.onrender.com";
       const response = await fetch(`${apiUrl}/`);
       const data = await response.json();
       console.log("Backend response:", data);
