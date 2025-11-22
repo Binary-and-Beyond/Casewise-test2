@@ -6,6 +6,7 @@ import React, {
   useCallback,
   useMemo,
 } from "react";
+import { flushSync } from "react-dom";
 import Image from "next/image";
 import { useRouter, usePathname } from "next/navigation";
 
@@ -312,6 +313,7 @@ export function Dashboard({}: DashboardProps) {
   const [isLoadingConcepts, setIsLoadingConcepts] = useState(false);
   const [isGeneratingMCQs, setIsGeneratingMCQs] = useState<string | null>(null);
   const conceptGenerationRef = useRef<boolean>(false);
+  const [showRegeneratingMessage, setShowRegeneratingMessage] = useState(false);
   // Track if we've already auto-attempted MCQ generation for a case in this session
   const mcqAutoAttemptedRef = useRef<Set<string>>(new Set());
   // Track if we've already auto-attempted concept generation for a case in this session
@@ -499,21 +501,28 @@ export function Dashboard({}: DashboardProps) {
   //   // Auto-generation disabled - use manual button instead
   // }, [currentView, selectedCase, activeChat]);
 
-  // Clear loading state if concepts exist but flag is still true
-  useEffect(() => {
-    if (currentView === "identify-concepts" && selectedCase) {
-      const hasConcepts =
-        selectedCase &&
-        generatedConcepts[selectedCase] &&
-        generatedConcepts[selectedCase].length > 0;
-      if (hasConcepts && isGeneratingConcepts) {
-        console.log("🔧 Clearing stuck loading state - concepts exist");
-        setIsGeneratingConcepts(false);
-        setAutoLoadingProgress("");
-        conceptGenerationRef.current = false;
-      }
-    }
-  }, [currentView, selectedCase, generatedConcepts, isGeneratingConcepts]);
+  // DISABLED: This was clearing isGeneratingConcepts too early during regeneration
+  // The finally block in handleGenerateBreakdown will handle cleanup
+  // useEffect(() => {
+  //   if (currentView === "identify-concepts" && selectedCase) {
+  //     const hasConcepts =
+  //       selectedCase &&
+  //       generatedConcepts[selectedCase] &&
+  //       generatedConcepts[selectedCase].length > 0;
+  //     if (
+  //       hasConcepts &&
+  //       isGeneratingConcepts &&
+  //       !conceptGenerationRef.current
+  //     ) {
+  //       console.log(
+  //         "🔧 Clearing stuck loading state - concepts exist and not actively generating"
+  //       );
+  //       setIsGeneratingConcepts(false);
+  //       setAutoLoadingProgress("");
+  //       conceptGenerationRef.current = false;
+  //     }
+  //   }
+  // }, [currentView, selectedCase, generatedConcepts, isGeneratingConcepts]);
 
   // Load concepts from database and auto-generate if needed when entering identify-concepts view
   // This works like MCQs - loads fresh data every time and auto-generates if missing
@@ -537,14 +546,26 @@ export function Dashboard({}: DashboardProps) {
     setIsLoadingConcepts(true);
 
     // Always reload concepts from database when entering the view (like MCQs do)
-    console.log("🔄 Loading concepts from database for identify-concepts view");
+    console.log(
+      "🔄 Loading concepts from database for identify-concepts view, selectedCase:",
+      selectedCase
+    );
     loadActiveChatContent(activeChat)
       .then(() => {
-        // Check immediately if concepts exist (state might already be updated)
-        const checkConcepts = () => {
+        // Use a longer delay to ensure state is fully updated after navigation
+        setTimeout(() => {
+          // Check if concepts exist for the selected case
           const hasConcepts =
             generatedConcepts[selectedCase] &&
             generatedConcepts[selectedCase].length > 0;
+
+          console.log(`🔍 Checking concepts for "${selectedCase}":`, {
+            hasConcepts,
+            conceptsCount: generatedConcepts[selectedCase]?.length || 0,
+            attempted: conceptAutoAttemptedRef.current.has(selectedCase),
+            isGenerating: isGeneratingConcepts,
+            isUploading: isUploading,
+          });
 
           if (hasConcepts) {
             // Concepts found - clear loading immediately
@@ -552,10 +573,11 @@ export function Dashboard({}: DashboardProps) {
             return;
           }
 
-          // Concepts not found yet - clear loading and trigger generation
+          // Concepts not found - clear loading and trigger generation
           setIsLoadingConcepts(false);
 
           // Auto-generate if concepts don't exist and we haven't already attempted
+          // This works for ALL cases including the first one
           if (
             !isGeneratingConcepts &&
             !isUploading &&
@@ -563,13 +585,14 @@ export function Dashboard({}: DashboardProps) {
           ) {
             conceptAutoAttemptedRef.current.add(selectedCase);
             console.log("🎯 Auto-generating concepts for case:", selectedCase);
-            handleGenerateBreakdown();
+            // Set generating state immediately for better UX
+            setIsGeneratingConcepts(true);
+            // Use setTimeout to ensure state is updated before calling handleGenerateBreakdown
+            setTimeout(() => {
+              handleGenerateBreakdown();
+            }, 100);
           }
-        };
-
-        // Check immediately, then once more after a short delay to catch async state updates
-        checkConcepts();
-        setTimeout(checkConcepts, 300);
+        }, 500); // Longer delay to ensure state is updated after navigation
       })
       .catch((error) => {
         console.error("❌ Failed to load concepts:", error);
@@ -2446,6 +2469,8 @@ export function Dashboard({}: DashboardProps) {
     }
 
     // Check if concepts already exist for this case
+    // NOTE: This check is skipped when manually regenerating (handleGenerateBreakdown bypasses this)
+    // This function is only called from auto-generation paths
     if (
       selectedCase &&
       generatedConcepts[selectedCase] &&
@@ -2463,9 +2488,18 @@ export function Dashboard({}: DashboardProps) {
     let safetyTimeout: NodeJS.Timeout | undefined;
 
     try {
-      setIsUploading(true);
+      console.log("🚀 Starting manual concept generation for:", selectedCase);
+      console.log(
+        "🔵 Setting isGeneratingConcepts to true in generateConceptsFromDocument"
+      );
+      // Set generating state IMMEDIATELY - no delays
+      conceptGenerationRef.current = true;
       setIsGeneratingConcepts(true);
+      setIsUploading(true);
       setUploadError("");
+
+      // Minimal delay just to let React process the state update
+      await new Promise((resolve) => setTimeout(resolve, 0));
 
       // Set up safety timeout
       if (typeof window !== "undefined") {
@@ -3417,9 +3451,11 @@ export function Dashboard({}: DashboardProps) {
               }}
               onIdentifyConcepts={(title) => {
                 console.log(`🔵 Key Concepts clicked for case: ${title}`);
-                setSelectedCaseWithPersistence(title);
-                // Clear the ref to allow generation
+                // Clear the refs to allow generation (including first case)
                 conceptGenerationRef.current = false;
+                conceptAutoAttemptedRef.current.delete(title); // Allow regeneration
+                // Set selected case first
+                setSelectedCaseWithPersistence(title);
                 if (!isGeneratingConcepts && !isUploading) {
                   console.log(`🔵 Navigating to identify-concepts view`);
                   navigateToView("identify-concepts");
@@ -3907,26 +3943,28 @@ export function Dashboard({}: DashboardProps) {
       return;
     }
 
-    // Force clear any stuck states
-    if (conceptGenerationRef.current) {
-      console.log("🔧 Clearing stuck conceptGenerationRef");
-      conceptGenerationRef.current = false;
-    }
-    if (isGeneratingConcepts) {
-      console.log("🔧 Clearing stuck isGeneratingConcepts");
-      setIsGeneratingConcepts(false);
-    }
-
     // Prevent if already generating
     if (isGeneratingConcepts || conceptGenerationRef.current) {
       console.log("⚠️ Already generating, skipping...");
       return;
     }
 
-    console.log("🚀 Starting manual concept generation for:", selectedCase);
-    conceptGenerationRef.current = true;
-    setIsGeneratingConcepts(true);
-    setAutoLoadingProgress("📚 Generating case breakdown...");
+    console.log("🚀 Starting concept generation for:", selectedCase);
+
+    // CRITICAL: Use flushSync to force React to render synchronously
+    // This ensures the UI updates BEFORE the API call starts
+    flushSync(() => {
+      conceptGenerationRef.current = true;
+      setIsGeneratingConcepts(true);
+      setAutoLoadingProgress("📚 Generating case breakdown...");
+    });
+
+    console.log(
+      "🔵 State set with flushSync - isGeneratingConcepts should be true now"
+    );
+
+    // Small delay to ensure the render is complete
+    await new Promise((resolve) => setTimeout(resolve, 50));
 
     try {
       const currentDocument = getCurrentChatDocument();
@@ -3970,34 +4008,48 @@ export function Dashboard({}: DashboardProps) {
           };
           await apiService.saveGeneratedContent(activeChat, contentToSave);
           console.log("✅ Case breakdown saved to database for:", selectedCase);
-          
+
           // Reload concepts from database to ensure persistence
+          // BUT keep isGeneratingConcepts true until after reload completes
           console.log("🔄 Reloading concepts from database after save...");
           await loadActiveChatContent(activeChat);
           console.log("✅ Concepts reloaded after save");
+
+          // Small delay to ensure UI shows the updated content before clearing loading state
+          await new Promise((resolve) => setTimeout(resolve, 200));
         } catch (error) {
           console.error("❌ Failed to save case breakdown:", error);
         }
 
-        // Clear loading state after concepts are set
-        setIsLoadingConcepts(false);
+        // Keep state set until finally block clears it
+        // This ensures loading animation stays visible until everything is complete
       } else {
         console.error("❌ No concepts in response");
-        setIsLoadingConcepts(false);
+        // Keep state set until finally block clears it
       }
     } catch (error) {
       console.error("❌ Failed to generate case breakdown:", error);
-      setIsLoadingConcepts(false);
       alert(
         `Failed to generate case breakdown: ${
           error instanceof Error ? error.message : String(error)
         }`
       );
+      // Keep state set until finally block clears it
     } finally {
-      console.log("🔧 Clearing generation flags");
-      setIsGeneratingConcepts(false);
-      setAutoLoadingProgress("");
-      conceptGenerationRef.current = false;
+      // Always clear generation flags in finally block to ensure cleanup
+      // Only clear if we're still in the same generation (check ref)
+      // This prevents clearing if a new generation has started
+      if (conceptGenerationRef.current) {
+        console.log("🔧 Clearing generation flags in finally block");
+        // Add a small delay before clearing to ensure UI has time to show the final state
+        setTimeout(() => {
+          setIsGeneratingConcepts(false);
+          setIsLoadingConcepts(false);
+          setShowRegeneratingMessage(false);
+          setAutoLoadingProgress("");
+          conceptGenerationRef.current = false;
+        }, 100);
+      }
     }
   };
 
@@ -4341,7 +4393,7 @@ export function Dashboard({}: DashboardProps) {
         </div>
 
         <div className="flex-1 flex flex-col">
-          {isLoadingConcepts || (isGeneratingConcepts && !hasConcepts) ? (
+          {isLoadingConcepts || isGeneratingConcepts ? (
             <div className="flex-1 flex items-center justify-center animate-fade-in">
               <div className="text-center max-w-md">
                 <div className="relative">
@@ -4350,21 +4402,29 @@ export function Dashboard({}: DashboardProps) {
                 <h3 className="text-lg font-medium text-gray-900 mb-2">
                   {isLoadingConcepts
                     ? "Loading Key Concepts"
+                    : isGeneratingConcepts
+                    ? "Generating Case Breakdown..."
                     : "Generating Case Breakdown"}
                 </h3>
                 <p className="text-gray-600 mb-4">
                   {isLoadingConcepts
                     ? "Loading concepts from database..."
+                    : isGeneratingConcepts
+                    ? "Analyzing your document and generating key concepts. This may take a few moments..."
                     : "Analyzing your document to create a detailed case breakdown..."}
                 </p>
                 <div className="w-full bg-gray-200 rounded-full h-2 overflow-hidden">
                   <div
                     className="bg-gradient-to-r from-blue-500 to-blue-600 h-2 rounded-full transition-all duration-1000 ease-out"
                     style={{ width: "65%" }}
-                  ></div>
+                  >
+                    {" "}
+                  </div>
                 </div>
                 <p className="text-sm text-gray-500 mt-3">
-                  This may take a few moments
+                  {isGeneratingConcepts
+                    ? "Please wait while we generate your key concepts..."
+                    : "This may take a few moments"}
                 </p>
               </div>
             </div>
@@ -4453,7 +4513,15 @@ export function Dashboard({}: DashboardProps) {
                   {selectedCase || caseBreakdown.title || "Case Breakdown"}
                 </h1>
                 <button
-                  onClick={handleGenerateBreakdown}
+                  onClick={() => {
+                    console.log("🔄 Regenerate button clicked");
+                    // Set local state IMMEDIATELY - this will show the message right away
+                    setShowRegeneratingMessage(true);
+                    conceptGenerationRef.current = true;
+                    setIsGeneratingConcepts(true);
+                    // Call handler
+                    handleGenerateBreakdown();
+                  }}
                   disabled={isGeneratingConcepts || !selectedCase}
                   className="p-2 rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                   title="Regenerate Case Breakdown"
@@ -4480,189 +4548,222 @@ export function Dashboard({}: DashboardProps) {
 
               {/* Case Breakdown Content */}
               <div className="bg-white rounded-lg border border-gray-200 shadow-sm p-6 space-y-6">
-                {/* Fallback: If description is empty or parsing fails, show raw description */}
-                {!caseDescription && caseBreakdown && (
-                  <div className="text-center py-8 text-gray-500">
-                    <p>Case breakdown is being generated. Please wait...</p>
+                {/* Show regenerating message when generating, otherwise show content */}
+                {showRegeneratingMessage || isGeneratingConcepts ? (
+                  <div className="text-center py-12">
+                    <div className="animate-spin rounded-full h-12 w-12 border-4 border-blue-200 border-t-blue-600 mx-auto mb-4"></div>
+                    <p className="text-blue-700 font-semibold text-xl">
+                      Regenerating case breakdown...
+                    </p>
+                    <p className="text-gray-600 mt-2">
+                      Please wait while we generate new content
+                    </p>
                   </div>
-                )}
-
-                {caseDescription && (
+                ) : (
                   <>
-                    {/* If parsing found sections, show them; otherwise show raw description */}
-                    {Object.keys(finalCaseSections).length > 0 ? (
+                    {/* Fallback: If description is empty or parsing fails, show raw description */}
+                    {!caseDescription &&
+                      caseBreakdown &&
+                      !isGeneratingConcepts && (
+                        <div className="text-center py-8 text-gray-500">
+                          <p>
+                            Case breakdown is being generated. Please wait...
+                          </p>
+                        </div>
+                      )}
+
+                    {caseDescription && (
                       <>
-                        {/* Objective - Always show */}
-                        {finalCaseSections["Objective"] && (
-                          <div>
-                            <h2 className="text-lg font-semibold text-gray-900 mb-2">
-                              Objective
-                            </h2>
-                            <p className="text-gray-700 whitespace-pre-line">
-                              {finalCaseSections["Objective"]}
-                            </p>
-                          </div>
-                        )}
+                        {/* If parsing found sections, show them; otherwise show raw description */}
+                        {Object.keys(finalCaseSections).length > 0 ? (
+                          <>
+                            {/* Objective - Always show */}
+                            {finalCaseSections["Objective"] && (
+                              <div>
+                                <h2 className="text-lg font-semibold text-gray-900 mb-2">
+                                  Objective
+                                </h2>
+                                <p className="text-gray-700 whitespace-pre-line">
+                                  {finalCaseSections["Objective"]}
+                                </p>
+                              </div>
+                            )}
 
-                        {/* Case Presentation - Always show with all subsections */}
-                        {(finalCaseSections["Case Presentation"] ||
-                          finalCaseSections["Patient Profile"] ||
-                          finalCaseSections["History of Present Illness"]) && (
-                          <div>
-                            <h2 className="text-lg font-semibold text-gray-900 mb-3">
-                              Case Presentation
-                            </h2>
-                            <div className="space-y-3 text-gray-700">
-                              {/* Patient Profile */}
-                              {finalCaseSections["Patient Profile"] && (
-                                <div>
-                                  <h3 className="font-semibold text-gray-900 mb-1">
-                                    Patient Profile:
-                                  </h3>
-                                  <p className="whitespace-pre-line">
-                                    {finalCaseSections["Patient Profile"]}
-                                  </p>
-                                </div>
-                              )}
-
-                              {/* History of Present Illness */}
-                              {finalCaseSections[
+                            {/* Case Presentation - Always show with all subsections */}
+                            {(finalCaseSections["Case Presentation"] ||
+                              finalCaseSections["Patient Profile"] ||
+                              finalCaseSections[
                                 "History of Present Illness"
-                              ] && (
-                                <div>
-                                  <h3 className="font-semibold text-gray-900 mb-1">
-                                    History of Present Illness:
-                                  </h3>
-                                  <p className="whitespace-pre-line">
-                                    {
-                                      finalCaseSections[
-                                        "History of Present Illness"
-                                      ]
-                                    }
-                                  </p>
+                              ]) && (
+                              <div>
+                                <h2 className="text-lg font-semibold text-gray-900 mb-3">
+                                  Case Presentation
+                                </h2>
+                                <div className="space-y-3 text-gray-700">
+                                  {/* Patient Profile */}
+                                  {finalCaseSections["Patient Profile"] && (
+                                    <div>
+                                      <h3 className="font-semibold text-gray-900 mb-1">
+                                        Patient Profile:
+                                      </h3>
+                                      <p className="whitespace-pre-line">
+                                        {finalCaseSections["Patient Profile"]}
+                                      </p>
+                                    </div>
+                                  )}
+
+                                  {/* History of Present Illness */}
+                                  {finalCaseSections[
+                                    "History of Present Illness"
+                                  ] && (
+                                    <div>
+                                      <h3 className="font-semibold text-gray-900 mb-1">
+                                        History of Present Illness:
+                                      </h3>
+                                      <p className="whitespace-pre-line">
+                                        {
+                                          finalCaseSections[
+                                            "History of Present Illness"
+                                          ]
+                                        }
+                                      </p>
+                                    </div>
+                                  )}
+
+                                  {/* Past Medical History */}
+                                  {finalCaseSections[
+                                    "Past Medical History"
+                                  ] && (
+                                    <div>
+                                      <h3 className="font-semibold text-gray-900 mb-1">
+                                        Past Medical History:
+                                      </h3>
+                                      <p className="whitespace-pre-line">
+                                        {
+                                          finalCaseSections[
+                                            "Past Medical History"
+                                          ]
+                                        }
+                                      </p>
+                                    </div>
+                                  )}
+
+                                  {/* Medications */}
+                                  {finalCaseSections["Medications"] && (
+                                    <div>
+                                      <h3 className="font-semibold text-gray-900 mb-1">
+                                        Medications:
+                                      </h3>
+                                      <p className="whitespace-pre-line">
+                                        {finalCaseSections["Medications"]}
+                                      </p>
+                                    </div>
+                                  )}
+
+                                  {/* Examination */}
+                                  {finalCaseSections["Examination"] && (
+                                    <div>
+                                      <h3 className="font-semibold text-gray-900 mb-1">
+                                        Examination:
+                                      </h3>
+                                      <p className="whitespace-pre-line">
+                                        {finalCaseSections["Examination"]}
+                                      </p>
+                                    </div>
+                                  )}
+
+                                  {/* If Case Presentation exists but no subsections, show it */}
+                                  {finalCaseSections["Case Presentation"] &&
+                                    !finalCaseSections["Patient Profile"] && (
+                                      <p className="whitespace-pre-line">
+                                        {finalCaseSections["Case Presentation"]}
+                                      </p>
+                                    )}
                                 </div>
-                              )}
+                              </div>
+                            )}
 
-                              {/* Past Medical History */}
-                              {finalCaseSections["Past Medical History"] && (
-                                <div>
-                                  <h3 className="font-semibold text-gray-900 mb-1">
-                                    Past Medical History:
-                                  </h3>
-                                  <p className="whitespace-pre-line">
-                                    {finalCaseSections["Past Medical History"]}
-                                  </p>
-                                </div>
-                              )}
+                            {/* Initial Investigations - Always show */}
+                            {finalCaseSections["Initial Investigations"] && (
+                              <div>
+                                <h2 className="text-lg font-semibold text-gray-900 mb-2">
+                                  Initial Investigations
+                                </h2>
+                                <p className="text-gray-700 whitespace-pre-line">
+                                  {finalCaseSections["Initial Investigations"]}
+                                </p>
+                              </div>
+                            )}
 
-                              {/* Medications */}
-                              {finalCaseSections["Medications"] && (
-                                <div>
-                                  <h3 className="font-semibold text-gray-900 mb-1">
-                                    Medications:
-                                  </h3>
-                                  <p className="whitespace-pre-line">
-                                    {finalCaseSections["Medications"]}
-                                  </p>
-                                </div>
-                              )}
+                            {/* Case Progression/Intervention - Always show */}
+                            {(finalCaseSections[
+                              "Case Progression/Intervention"
+                            ] ||
+                              finalCaseSections["Case Progression"]) && (
+                              <div>
+                                <h2 className="text-lg font-semibold text-gray-900 mb-2">
+                                  Case Progression/Intervention
+                                </h2>
+                                <p className="text-gray-700 whitespace-pre-line">
+                                  {finalCaseSections[
+                                    "Case Progression/Intervention"
+                                  ] || finalCaseSections["Case Progression"]}
+                                </p>
+                              </div>
+                            )}
 
-                              {/* Examination */}
-                              {finalCaseSections["Examination"] && (
-                                <div>
-                                  <h3 className="font-semibold text-gray-900 mb-1">
-                                    Examination:
-                                  </h3>
-                                  <p className="whitespace-pre-line">
-                                    {finalCaseSections["Examination"]}
-                                  </p>
-                                </div>
-                              )}
-
-                              {/* If Case Presentation exists but no subsections, show it */}
-                              {finalCaseSections["Case Presentation"] &&
-                                !finalCaseSections["Patient Profile"] && (
-                                  <p className="whitespace-pre-line">
-                                    {finalCaseSections["Case Presentation"]}
-                                  </p>
-                                )}
-                            </div>
-                          </div>
-                        )}
-
-                        {/* Initial Investigations - Always show */}
-                        {finalCaseSections["Initial Investigations"] && (
+                            {/* Final Diagnosis/Learning Anchor - Always show */}
+                            {(finalCaseSections[
+                              "Final Diagnosis/Learning Anchor"
+                            ] ||
+                              finalCaseSections["Final Diagnosis"]) && (
+                              <div>
+                                <h2 className="text-lg font-semibold text-gray-900 mb-2">
+                                  Final Diagnosis/Learning Anchor
+                                </h2>
+                                <p className="text-gray-700 whitespace-pre-line">
+                                  {finalCaseSections[
+                                    "Final Diagnosis/Learning Anchor"
+                                  ] || finalCaseSections["Final Diagnosis"]}
+                                </p>
+                              </div>
+                            )}
+                          </>
+                        ) : (
+                          /* If parsing failed, show raw description */
                           <div>
                             <h2 className="text-lg font-semibold text-gray-900 mb-2">
-                              Initial Investigations
+                              Case Breakdown
                             </h2>
                             <p className="text-gray-700 whitespace-pre-line">
-                              {finalCaseSections["Initial Investigations"]}
-                            </p>
-                          </div>
-                        )}
-
-                        {/* Case Progression/Intervention - Always show */}
-                        {(finalCaseSections["Case Progression/Intervention"] ||
-                          finalCaseSections["Case Progression"]) && (
-                          <div>
-                            <h2 className="text-lg font-semibold text-gray-900 mb-2">
-                              Case Progression/Intervention
-                            </h2>
-                            <p className="text-gray-700 whitespace-pre-line">
-                              {finalCaseSections[
-                                "Case Progression/Intervention"
-                              ] || finalCaseSections["Case Progression"]}
-                            </p>
-                          </div>
-                        )}
-
-                        {/* Final Diagnosis/Learning Anchor - Always show */}
-                        {(finalCaseSections[
-                          "Final Diagnosis/Learning Anchor"
-                        ] ||
-                          finalCaseSections["Final Diagnosis"]) && (
-                          <div>
-                            <h2 className="text-lg font-semibold text-gray-900 mb-2">
-                              Final Diagnosis/Learning Anchor
-                            </h2>
-                            <p className="text-gray-700 whitespace-pre-line">
-                              {finalCaseSections[
-                                "Final Diagnosis/Learning Anchor"
-                              ] || finalCaseSections["Final Diagnosis"]}
+                              {caseDescription}
                             </p>
                           </div>
                         )}
                       </>
-                    ) : (
-                      /* If parsing failed, show raw description */
-                      <div>
-                        <h2 className="text-lg font-semibold text-gray-900 mb-2">
-                          Case Breakdown
-                        </h2>
-                        <p className="text-gray-700 whitespace-pre-line">
-                          {caseDescription}
-                        </p>
+                    )}
+
+                    {/* If no description at all, show loading or message */}
+                    {!caseDescription && (
+                      <div className="text-center py-8 text-gray-500">
+                        {isGeneratingConcepts || isUploading ? (
+                          <>
+                            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto mb-4"></div>
+                            <p>Generating case breakdown... Please wait...</p>
+                            {autoLoadingProgress && (
+                              <p className="text-sm mt-2">
+                                {autoLoadingProgress}
+                              </p>
+                            )}
+                          </>
+                        ) : (
+                          <p>
+                            Case breakdown is being generated. Please wait...
+                          </p>
+                        )}
                       </div>
                     )}
                   </>
-                )}
-
-                {/* If no description at all, show loading or message */}
-                {!caseDescription && (
-                  <div className="text-center py-8 text-gray-500">
-                    {isGeneratingConcepts || isUploading ? (
-                      <>
-                        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto mb-4"></div>
-                        <p>Generating case breakdown... Please wait...</p>
-                        {autoLoadingProgress && (
-                          <p className="text-sm mt-2">{autoLoadingProgress}</p>
-                        )}
-                      </>
-                    ) : (
-                      <p>Case breakdown is being generated. Please wait...</p>
-                    )}
-                  </div>
                 )}
               </div>
 
