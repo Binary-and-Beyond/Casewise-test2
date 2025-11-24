@@ -334,16 +334,29 @@ export function Dashboard({}: DashboardProps) {
   const [hasUnsavedProgress, setHasUnsavedProgress] = useState(false);
   const [chatLoading, setChatLoading] = useState(false);
 
-  // Ensure a case is selected when in explore-cases view
+  // Ensure a case is selected when in explore-cases or identify-concepts view
   useEffect(() => {
     if (
-      currentView === "explore-cases" &&
+      (currentView === "explore-cases" ||
+        currentView === "identify-concepts") &&
       generatedCases.length > 0 &&
       !selectedCase
     ) {
-      console.log("🎯 Auto-selecting first case for explore-cases view");
+      console.log(`🎯 Auto-selecting first case for ${currentView} view`);
       const firstCase = generatedCases[0];
+      console.log(`🎯 First case title: "${firstCase.title}"`);
       setSelectedCaseWithPersistence(firstCase.title);
+      // Clear the attempted ref for the first case to ensure it can generate
+      conceptAutoAttemptedRef.current.delete(firstCase.title);
+      // Force clear any existing concepts for first case to ensure regeneration
+      setGeneratedConcepts((prev) => {
+        const updated = { ...prev };
+        delete updated[firstCase.title];
+        console.log(
+          `🗑️ Force cleared concepts for first case "${firstCase.title}" to ensure regeneration`
+        );
+        return updated;
+      });
     }
   }, [currentView, generatedCases, selectedCase]);
 
@@ -552,25 +565,127 @@ export function Dashboard({}: DashboardProps) {
     );
     loadActiveChatContent(activeChat)
       .then(() => {
-        // Use a longer delay to ensure state is fully updated after navigation
+        // Use 2 second delay for loading key concepts
         setTimeout(() => {
-          // Check if concepts exist for the selected case
-          const hasConcepts =
-            generatedConcepts[selectedCase] &&
-            generatedConcepts[selectedCase].length > 0;
-
-          console.log(`🔍 Checking concepts for "${selectedCase}":`, {
-            hasConcepts,
-            conceptsCount: generatedConcepts[selectedCase]?.length || 0,
-            attempted: conceptAutoAttemptedRef.current.has(selectedCase),
-            isGenerating: isGeneratingConcepts,
-            isUploading: isUploading,
-          });
-
-          if (hasConcepts) {
-            // Concepts found - clear loading immediately
+          // Double-check selectedCase is still set (in case it was cleared)
+          if (!selectedCase) {
+            console.log(
+              "⚠️ selectedCase is empty after load, skipping concept check"
+            );
             setIsLoadingConcepts(false);
             return;
+          }
+
+          // Check if concepts exist for the selected case
+          // ONLY check exact match - don't use fallback or case-insensitive matching for validation
+          // This prevents false positives where concepts from other cases are found
+          let conceptsForCase: any[] = generatedConcepts[selectedCase] || [];
+
+          // FORCE first case to have 0 concepts to ensure it always generates
+          const firstCaseTitle =
+            generatedCases.length > 0 ? generatedCases[0].title : null;
+          if (selectedCase === firstCaseTitle) {
+            console.log(
+              `🔧 Force clearing concepts for first case "${selectedCase}" to ensure generation`
+            );
+            conceptsForCase = [];
+            // Also clear from state to prevent any cached concepts
+            setGeneratedConcepts((prev) => {
+              const updated = { ...prev };
+              delete updated[selectedCase];
+              return updated;
+            });
+            // Clear from attempted ref
+            conceptAutoAttemptedRef.current.delete(selectedCase);
+          }
+
+          // Only use exact match - if no exact match, concepts don't exist for this case
+          // This prevents the first case from finding concepts from other cases
+
+          // Validate that concepts actually have content (not just empty objects)
+          // Be strict: require at least one concept with substantial content
+
+          // DETAILED LOGGING: Print concepts for debugging first case issue
+          if (conceptsForCase.length > 0) {
+            console.log(
+              `🔍 CONCEPT CHECK for "${selectedCase}": ${conceptsForCase.length} concepts found`
+            );
+            console.log(
+              `📋 All concept keys in state:`,
+              Object.keys(generatedConcepts)
+            );
+            conceptsForCase.forEach((concept: any, index: number) => {
+              console.log(`Concept ${index + 1}:`, {
+                case_title: concept.case_title || "NO CASE_TITLE",
+                hasTitle: !!concept.title?.trim(),
+                hasDescription: !!concept.description?.trim(),
+                hasObjective: !!concept.objective?.trim(),
+                hasPatientProfile: !!concept.patient_profile?.trim(),
+              });
+            });
+          }
+
+          const hasValidConcepts =
+            conceptsForCase.length > 0 &&
+            conceptsForCase.some((concept: any, index: number) => {
+              // Check if concept has actual content (title, description, or structured fields)
+              const hasTitle = concept.title && concept.title.trim().length > 0;
+              const hasDescription =
+                concept.description && concept.description.trim().length > 10; // At least 10 chars
+              const hasObjective =
+                concept.objective && concept.objective.trim().length > 10;
+              const hasPatientProfile =
+                concept.patient_profile &&
+                concept.patient_profile.trim().length > 10;
+              const hasHistory =
+                concept.history_of_present_illness &&
+                concept.history_of_present_illness.trim().length > 10;
+              const hasExamination =
+                concept.examination && concept.examination.trim().length > 10;
+              const hasDiagnosis =
+                concept.final_diagnosis &&
+                concept.final_diagnosis.trim().length > 10;
+
+              const isValid =
+                hasTitle &&
+                (hasDescription ||
+                  hasObjective ||
+                  hasPatientProfile ||
+                  hasHistory ||
+                  hasExamination ||
+                  hasDiagnosis);
+
+              // Require at least title AND one substantial field (not just title alone)
+              return isValid;
+            });
+
+          if (hasValidConcepts) {
+            console.log(`✅ Valid concepts found for "${selectedCase}"`);
+          } else if (conceptsForCase.length > 0) {
+            console.log(
+              `⚠️ Invalid concepts for "${selectedCase}" - will regenerate`
+            );
+          }
+
+          if (hasValidConcepts) {
+            // Valid concepts found - clear loading immediately
+            console.log(
+              `✅ Valid concepts found for "${selectedCase}", skipping generation`
+            );
+            setIsLoadingConcepts(false);
+            return;
+          } else if (conceptsForCase.length > 0) {
+            // Concepts exist but are invalid/empty - clear them and allow regeneration
+            console.log(
+              `⚠️ Invalid/empty concepts found for "${selectedCase}", will regenerate`
+            );
+            setGeneratedConcepts((prev) => {
+              const updated = { ...prev };
+              delete updated[selectedCase];
+              return updated;
+            });
+            // Clear from attempted ref so it can regenerate
+            conceptAutoAttemptedRef.current.delete(selectedCase);
           }
 
           // Concepts not found - clear loading and trigger generation
@@ -578,21 +693,38 @@ export function Dashboard({}: DashboardProps) {
 
           // Auto-generate if concepts don't exist and we haven't already attempted
           // This works for ALL cases including the first one
+          // Also check conceptGenerationRef to prevent triggering during manual regeneration
           if (
             !isGeneratingConcepts &&
             !isUploading &&
+            !conceptGenerationRef.current &&
             !conceptAutoAttemptedRef.current.has(selectedCase)
           ) {
             conceptAutoAttemptedRef.current.add(selectedCase);
-            console.log("🎯 Auto-generating concepts for case:", selectedCase);
+            console.log(
+              `🎯 Auto-generating concepts for case: "${selectedCase}"`
+            );
             // Set generating state immediately for better UX
             setIsGeneratingConcepts(true);
             // Use setTimeout to ensure state is updated before calling handleGenerateBreakdown
             setTimeout(() => {
               handleGenerateBreakdown();
             }, 100);
+          } else {
+            // Log why generation was skipped
+            const reasons = [];
+            if (isGeneratingConcepts) reasons.push("already generating");
+            if (isUploading) reasons.push("uploading");
+            if (conceptGenerationRef.current)
+              reasons.push("manual regeneration in progress");
+            if (conceptAutoAttemptedRef.current.has(selectedCase))
+              reasons.push("already attempted");
+            console.log(
+              `⚠️ Skipping auto-generation for "${selectedCase}":`,
+              reasons.join(", ")
+            );
           }
-        }, 500); // Longer delay to ensure state is updated after navigation
+        }, 2000); // 2 second delay for loading key concepts
       })
       .catch((error) => {
         console.error("❌ Failed to load concepts:", error);
@@ -842,33 +974,26 @@ export function Dashboard({}: DashboardProps) {
       }
 
       if (content.concepts && content.concepts.length > 0) {
-        // Group concepts by case title - preserve full concept objects, not just strings
+        // Group concepts by case title - ONLY group concepts with valid case_title
+        // Skip concepts without case_title or with "General" to prevent mixing
         const conceptGroups: Record<string, any[]> = {};
         content.concepts.forEach((concept) => {
-          const caseTitle = concept.case_title || "General";
-          if (!conceptGroups[caseTitle]) {
-            conceptGroups[caseTitle] = [];
+          const caseTitle = concept.case_title;
+          // Only group concepts that have a valid, non-empty case_title
+          // Skip "General" and null/undefined to prevent all concepts mixing together
+          if (caseTitle && caseTitle.trim() && caseTitle !== "General") {
+            if (!conceptGroups[caseTitle]) {
+              conceptGroups[caseTitle] = [];
+            }
+            // Store the full concept object
+            conceptGroups[caseTitle].push(concept);
           }
-          // Store the full concept object, not just a string
-          conceptGroups[caseTitle].push(concept);
         });
-        // Merge with existing concepts instead of replacing
-        setGeneratedConcepts((prev) => {
-          const merged = {
-            ...prev,
-            ...conceptGroups,
-          };
-          console.log("🔄 Concept Merge Debug:", {
-            previousCases: Object.keys(prev),
-            newCases: Object.keys(conceptGroups),
-            mergedCases: Object.keys(merged),
-          });
-          return merged;
-        });
-        console.log(
-          "✅ Loaded concepts for active chat:",
-          content.concepts.length
-        );
+        // REPLACE concepts (don't merge) to ensure clean state per chat
+        setGeneratedConcepts(conceptGroups);
+      } else {
+        // Clear concepts if none found
+        setGeneratedConcepts({});
       }
 
       console.log("✅ Active chat content loaded successfully");
@@ -1738,6 +1863,8 @@ export function Dashboard({}: DashboardProps) {
 
   const performChatSwitch = async (chatId: string) => {
     setChatLoading(true);
+    // Clear concepts when switching chats to prevent mixing
+    setGeneratedConcepts({});
 
     // Add a small delay for better UX (5ms as requested)
     await new Promise((resolve) => setTimeout(resolve, 5));
@@ -1752,10 +1879,11 @@ export function Dashboard({}: DashboardProps) {
     setChatMessages([]);
     setSelectedCase("");
     setUploadError("");
+    // Clear concepts when switching chats to prevent mixing
+    setGeneratedConcepts({});
 
     // Load generated content for this chat
     try {
-      console.log("📚 Loading generated content for chat:", chatId);
       const content = await apiService.getGeneratedContent(chatId);
 
       if (content.cases && content.cases.length > 0) {
@@ -1801,30 +1929,26 @@ export function Dashboard({}: DashboardProps) {
       }
 
       if (content.concepts && content.concepts.length > 0) {
-        // Group concepts by case title - preserve full concept objects, not just strings
+        // Group concepts by case title - ONLY group concepts with valid case_title
+        // Skip concepts without case_title or with "General" to prevent mixing
         const conceptGroups: Record<string, any[]> = {};
         content.concepts.forEach((concept) => {
-          const caseTitle = concept.case_title || "General";
-          if (!conceptGroups[caseTitle]) {
-            conceptGroups[caseTitle] = [];
+          const caseTitle = concept.case_title;
+          // Only group concepts that have a valid, non-empty case_title
+          // Skip "General" and null/undefined to prevent all concepts mixing together
+          if (caseTitle && caseTitle.trim() && caseTitle !== "General") {
+            if (!conceptGroups[caseTitle]) {
+              conceptGroups[caseTitle] = [];
+            }
+            // Store the full concept object
+            conceptGroups[caseTitle].push(concept);
           }
-          // Store the full concept object, not just a string
-          conceptGroups[caseTitle].push(concept);
         });
-        // Merge with existing concepts instead of replacing
-        setGeneratedConcepts((prev) => {
-          const merged = {
-            ...prev,
-            ...conceptGroups,
-          };
-          console.log("🔄 Concept Merge Debug:", {
-            previousCases: Object.keys(prev),
-            newCases: Object.keys(conceptGroups),
-            mergedCases: Object.keys(merged),
-          });
-          return merged;
-        });
-        console.log("✅ Loaded concepts:", content.concepts.length);
+        // REPLACE concepts (don't merge) to ensure clean state per chat
+        setGeneratedConcepts(conceptGroups);
+      } else {
+        // Clear concepts if none found
+        setGeneratedConcepts({});
       }
 
       console.log("✅ Generated content loaded successfully");
@@ -3082,8 +3206,8 @@ export function Dashboard({}: DashboardProps) {
       "🔄 Finishing completion popup (dashboard) — no extra analytics call"
     );
     setShowCompletionPopup(false);
-    // Navigate back to the previous page
-    router.back();
+    // Navigate to case generation screen (main view)
+    navigateToView("main");
   };
 
   // Navigation warning handlers
@@ -3976,11 +4100,18 @@ export function Dashboard({}: DashboardProps) {
       console.log(
         `🔵 Calling identifyConcepts with documentId: ${currentDocument.id}, caseTitle: ${selectedCase}`
       );
-      const conceptsResponse = await apiService.identifyConcepts(
-        currentDocument.id,
-        1,
-        selectedCase
-      );
+
+      // Add timeout to prevent infinite loading
+      const timeoutPromise = new Promise((_, reject) => {
+        setTimeout(() => {
+          reject(new Error("Concept generation timed out after 2 minutes"));
+        }, 120000); // 2 minutes timeout
+      });
+
+      const conceptsResponse = (await Promise.race([
+        apiService.identifyConcepts(currentDocument.id, 1, selectedCase),
+        timeoutPromise,
+      ])) as any;
 
       console.log("📊 Concepts response received:", conceptsResponse);
 
@@ -4011,7 +4142,9 @@ export function Dashboard({}: DashboardProps) {
 
           // Reload concepts from database to ensure persistence
           // BUT keep isGeneratingConcepts true until after reload completes
+          // Set a flag to prevent useEffect from triggering auto-generation during reload
           console.log("🔄 Reloading concepts from database after save...");
+          conceptGenerationRef.current = true; // Keep this true to prevent useEffect from triggering
           await loadActiveChatContent(activeChat);
           console.log("✅ Concepts reloaded after save");
 
@@ -4025,6 +4158,7 @@ export function Dashboard({}: DashboardProps) {
         // This ensures loading animation stays visible until everything is complete
       } else {
         console.error("❌ No concepts in response");
+        setUploadError("No concepts were generated. Please try again.");
         // Keep state set until finally block clears it
       }
     } catch (error) {
@@ -4039,16 +4173,25 @@ export function Dashboard({}: DashboardProps) {
       // Always clear generation flags in finally block to ensure cleanup
       // Only clear if we're still in the same generation (check ref)
       // This prevents clearing if a new generation has started
+      console.log(
+        "🔧 Finally block reached, conceptGenerationRef:",
+        conceptGenerationRef.current
+      );
       if (conceptGenerationRef.current) {
         console.log("🔧 Clearing generation flags in finally block");
         // Add a small delay before clearing to ensure UI has time to show the final state
         setTimeout(() => {
+          console.log("🔧 Actually clearing state now");
           setIsGeneratingConcepts(false);
           setIsLoadingConcepts(false);
           setShowRegeneratingMessage(false);
           setAutoLoadingProgress("");
           conceptGenerationRef.current = false;
         }, 100);
+      } else {
+        console.log(
+          "⚠️ conceptGenerationRef is false, not clearing (new generation may have started)"
+        );
       }
     }
   };
@@ -4513,13 +4656,38 @@ export function Dashboard({}: DashboardProps) {
                   {selectedCase || caseBreakdown.title || "Case Breakdown"}
                 </h1>
                 <button
-                  onClick={() => {
+                  onClick={async () => {
                     console.log("🔄 Regenerate button clicked");
+                    if (!selectedCase) return;
+
+                    // Prevent if already generating
+                    if (isGeneratingConcepts || conceptGenerationRef.current) {
+                      console.log(
+                        "⚠️ Already generating, skipping regenerate..."
+                      );
+                      return;
+                    }
+
+                    // Clear the attempted ref so regeneration can happen
+                    conceptAutoAttemptedRef.current.delete(selectedCase);
+
+                    // Clear existing concepts from state to force regeneration
+                    setGeneratedConcepts((prev) => {
+                      const updated = { ...prev };
+                      delete updated[selectedCase];
+                      console.log(
+                        `🗑️ Cleared concepts for "${selectedCase}" to force regeneration`
+                      );
+                      return updated;
+                    });
+
                     // Set local state IMMEDIATELY - this will show the message right away
                     setShowRegeneratingMessage(true);
-                    conceptGenerationRef.current = true;
-                    setIsGeneratingConcepts(true);
-                    // Call handler
+
+                    // Small delay to ensure state is cleared before calling handler
+                    await new Promise((resolve) => setTimeout(resolve, 100));
+
+                    // Now call the handler - it will set the ref and state itself
                     handleGenerateBreakdown();
                   }}
                   disabled={isGeneratingConcepts || !selectedCase}

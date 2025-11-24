@@ -2745,10 +2745,10 @@ async def generate_case_titles(
         # Determine difficulty distribution
         num_cases = request.num_cases
         if num_cases == 5:
-            difficulty_distribution = "EXACTLY 1 Easy case (first), 2 Moderate cases (second and third), and 2 Hard cases (fourth and fifth) in this EXACT order"
+            difficulty_distribution = "EXACTLY 1 Moderate case (first), 2 Moderate cases (second and third), and 2 Hard cases (fourth and fifth) in this EXACT order"
             difficulty_requirements = """
         CRITICAL DIFFICULTY REQUIREMENTS (for 5 cases - MUST FOLLOW THIS EXACT ORDER):
-        - Case 1 (FIRST): MUST be "Easy" - Straightforward presentation, clear symptoms, obvious diagnosis, basic medical knowledge required. Use simple, direct medical concepts from the document.
+        - Case 1 (FIRST): MUST be "Moderate" - Moderate complexity, some diagnostic challenges, requires intermediate clinical reasoning. Use moderately complex concepts from the document.
         - Case 2 (SECOND): MUST be "Moderate" - Moderate complexity, some diagnostic challenges, requires intermediate clinical reasoning. Use moderately complex concepts from the document.
         - Case 3 (THIRD): MUST be "Moderate" - Moderate complexity, some diagnostic challenges, requires intermediate clinical reasoning. Use different moderately complex concepts from the document.
         - Case 4 (FOURTH): MUST be "Hard" - Complex presentation, multiple differential diagnoses, requires advanced clinical reasoning and integration of multiple concepts. Use complex, nuanced concepts from the document.
@@ -2803,13 +2803,13 @@ async def generate_case_titles(
         - The difficulty level MUST match the complexity of the case description
         - ALL cases MUST be directly relevant to the document content above
         - Use specific medical concepts, conditions, and terminology from the document
-        - Case 1 = Easy, Case 2 = Moderate, Case 3 = Moderate, Case 4 = Hard, Case 5 = Hard
+        - Case 1 = Moderate, Case 2 = Moderate, Case 3 = Moderate, Case 4 = Hard, Case 5 = Hard
         """
         
         # Generate response from OpenAI
         system_message = "You are an expert medical case generator. Each case description MUST be 250-300 words. Always respond with valid JSON format."
         if request.num_cases == 5:
-            system_message += " CRITICAL: When generating 5 cases, you MUST create exactly 1 Easy case (first), 2 Moderate cases (second and third), and 2 Hard cases (fourth and fifth) in this EXACT order. The case descriptions must match their difficulty levels and be directly relevant to the document content."
+            system_message += " CRITICAL: When generating 5 cases, you MUST create exactly 3 Moderate cases (first, second, and third), and 2 Hard cases (fourth and fifth) in this EXACT order. The case descriptions must match their difficulty levels and be directly relevant to the document content."
         
         response = openai_client.chat.completions.create(
             model="gpt-4o-mini",
@@ -3257,7 +3257,7 @@ async def identify_concepts(
         
         print(f"🔍 Case details - case_difficulty: '{case_difficulty}' (type: {type(case_difficulty)})")
         if not case_difficulty:
-            print(f"⚠️ WARNING: case_difficulty is None/empty - will use lenient validation (treating as potentially Easy/first case)")
+            print(f"⚠️ WARNING: case_difficulty is None/empty - will use normal validation (first case is now Moderate)")
         
         # Build demographics string
         if age and gender:
@@ -3461,10 +3461,10 @@ Return ONLY valid JSON, no markdown formatting."""
                     if case_difficulty:
                         is_easy_case = case_difficulty.lower().strip() == "easy"
                     # Also check if it's likely the first case (no difficulty set, or first in list)
-                    # If case_difficulty is None, be lenient (might be first case)
+                    # If case_difficulty is None, treat as Moderate (first case is now Moderate)
                     if not case_difficulty:
-                        print(f"⚠️ No case_difficulty found - treating as potentially Easy/first case (lenient validation)")
-                        is_easy_case = True  # Be lenient if difficulty not found
+                        print(f"⚠️ No case_difficulty found - treating as Moderate (first case is now Moderate)")
+                        is_easy_case = False  # First case is now Moderate, use normal validation
                     if not has_structured_fields and description and not is_easy_case:
                         generic_phrases = [
                             "systematic review investigates",
@@ -3553,6 +3553,29 @@ Return ONLY valid JSON, no markdown formatting."""
                         print(f"✅ Validated content: {content_length} characters (structured fields: {structured_fields_present}, Easy case: {is_easy_case})")
                         print(f"✅ Final concepts_data length: {len(concepts_data)}")
                         print(f"✅ Concept title: {first_concept.get('title', 'N/A')}")
+                        
+                        # DETAILED LOGGING: Print all concept fields for debugging
+                        print(f"\n🔍🔍🔍 DETAILED CONCEPT DATA for case_title: '{request.case_title}':")
+                        print(f"📊 Total concepts: {len(concepts_data)}")
+                        for idx, concept in enumerate(concepts_data):
+                            print(f"\n📝 Concept {idx + 1}:")
+                            print(f"   - title: {concept.get('title', 'NO TITLE')[:100]}")
+                            print(f"   - title length: {len(concept.get('title', ''))}")
+                            print(f"   - description: {concept.get('description', 'NO DESCRIPTION')[:200]}")
+                            print(f"   - description length: {len(concept.get('description', ''))}")
+                            print(f"   - objective: {concept.get('objective', 'NO OBJECTIVE')[:200]}")
+                            print(f"   - objective length: {len(concept.get('objective', ''))}")
+                            print(f"   - patient_profile: {concept.get('patient_profile', 'NO PATIENT_PROFILE')[:200]}")
+                            print(f"   - patient_profile length: {len(concept.get('patient_profile', ''))}")
+                            print(f"   - history_of_present_illness: {concept.get('history_of_present_illness', 'NO HISTORY')[:200]}")
+                            print(f"   - history length: {len(concept.get('history_of_present_illness', ''))}")
+                            print(f"   - examination: {concept.get('examination', 'NO EXAMINATION')[:200]}")
+                            print(f"   - examination length: {len(concept.get('examination', ''))}")
+                            print(f"   - final_diagnosis: {concept.get('final_diagnosis', 'NO DIAGNOSIS')[:200]}")
+                            print(f"   - diagnosis length: {len(concept.get('final_diagnosis', ''))}")
+                            print(f"   - case_title: {concept.get('case_title', 'NO CASE_TITLE')}")
+                            print(f"   - Full concept keys: {list(concept.keys())}")
+                        
                         break  # Success, exit retry loop
                     else:
                         print(f"⚠️ WARNING: No content found (content_length: {content_length}), will retry...")
@@ -3725,10 +3748,10 @@ async def auto_generate_content(
                 # Determine difficulty distribution
                 num_cases = request.num_cases
                 if num_cases == 5:
-                    difficulty_distribution = "EXACTLY 1 Easy case (first), 2 Moderate cases (second and third), and 2 Hard cases (fourth and fifth) in this EXACT order"
+                    difficulty_distribution = "EXACTLY 1 Moderate case (first), 2 Moderate cases (second and third), and 2 Hard cases (fourth and fifth) in this EXACT order"
                     difficulty_requirements = """
 CRITICAL DIFFICULTY REQUIREMENTS (for 5 cases - MUST FOLLOW THIS EXACT ORDER):
-- Case 1 (FIRST): MUST be "Easy" - Straightforward presentation, clear symptoms, obvious diagnosis, basic medical knowledge required. Use simple, direct medical concepts from the document.
+- Case 1 (FIRST): MUST be "Moderate" - Moderate complexity, some diagnostic challenges, requires intermediate clinical reasoning. Use moderately complex concepts from the document.
 - Case 2 (SECOND): MUST be "Moderate" - Moderate complexity, some diagnostic challenges, requires intermediate clinical reasoning. Use moderately complex concepts from the document.
 - Case 3 (THIRD): MUST be "Moderate" - Moderate complexity, some diagnostic challenges, requires intermediate clinical reasoning. Use different moderately complex concepts from the document.
 - Case 4 (FOURTH): MUST be "Hard" - Complex presentation, multiple differential diagnoses, requires advanced clinical reasoning and integration of multiple concepts. Use complex, nuanced concepts from the document.
@@ -3790,7 +3813,7 @@ Format your response as a JSON array with the following structure (MUST be in th
         "title": "Specific Case Title (e.g., 'Acute Myocardial Infarction in a 55-year-old Male')",
         "description": "Comprehensive case description (200-300 words) that MATCHES the difficulty level and is DIRECTLY RELEVANT to the document. Easy cases should be straightforward, Hard cases should be complex with subtle findings.",
         "key_points": ["Specific learning point 1", "Specific learning point 2", "Specific learning point 3", "Specific learning point 4", "Specific learning point 5"],
-        "difficulty": "Easy" (for first case), "Moderate" (for second and third cases), or "Hard" (for fourth and fifth cases)
+        "difficulty": "Moderate" (for first, second, and third cases), or "Hard" (for fourth and fifth cases)
     }}
 ]
 
@@ -5071,10 +5094,20 @@ async def save_generated_content(
                 concept_doc = {
                     "chat_id": chat_id,
                     "document_id": document_id,
-                    "case_title": content.get("case_title"),
-                    "title": concept["title"],
-                    "description": concept["description"],
-                    "importance": concept.get("importance", "medium"),  # Default importance if not provided
+                    "case_title": content.get("case_title"),  # Ensure case_title is saved
+                    "title": concept.get("title", ""),
+                    "description": concept.get("description", ""),
+                    "importance": concept.get("importance", "medium"),
+                    # Save all structured fields if present
+                    "objective": concept.get("objective"),
+                    "patient_profile": concept.get("patient_profile"),
+                    "history_of_present_illness": concept.get("history_of_present_illness"),
+                    "past_medical_history": concept.get("past_medical_history"),
+                    "medications": concept.get("medications"),
+                    "examination": concept.get("examination"),
+                    "initial_investigations": concept.get("initial_investigations"),
+                    "case_progression": concept.get("case_progression"),
+                    "final_diagnosis": concept.get("final_diagnosis"),
                     "created_at": datetime.utcnow()
                 }
                 db.generated_concepts.insert_one(concept_doc)
