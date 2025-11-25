@@ -525,7 +525,7 @@ class Concept(BaseModel):
     description: str
     importance: str
     difficulty: Optional[str] = None
-    # New structured fields for case breakdown
+    # Old format structured fields for case breakdown
     objective: Optional[str] = None
     patient_profile: Optional[str] = None
     history_of_present_illness: Optional[str] = None
@@ -535,6 +535,17 @@ class Concept(BaseModel):
     initial_investigations: Optional[str] = None
     case_progression: Optional[str] = None
     final_diagnosis: Optional[str] = None
+    # New format structured fields for key concepts
+    case_id: Optional[str] = None
+    key_concept: Optional[str] = None
+    key_concept_summary: Optional[str] = None
+    learning_objectives: Optional[List[str]] = None
+    core_pathophysiology: Optional[str] = None
+    clinical_reasoning_steps: Optional[List[str]] = None
+    red_flags_and_pitfalls: Optional[List[str]] = None
+    differential_diagnosis_framework: Optional[List[str]] = None
+    important_labs_imaging_to_know: Optional[List[str]] = None
+    why_this_case_matters: Optional[str] = None
 
 class ConceptResponse(BaseModel):
     """Concept response schema"""
@@ -3290,50 +3301,130 @@ async def identify_concepts(
         
         while retry_count <= max_retries:
             try:
-                # Create the prompt for concept identification - generate 1 detailed case breakdown
-                case_context = ""
-                if request.case_title:
-                    # Simplified prompt - just generate key concepts with headings
-                    if case_demographics:
-                        case_context = f"\n\nGenerate key concepts for this case: '{request.case_title}'.{case_demographics}\n\nBreak down the case into clear sections with headings. Include: Objective, Patient Profile, History, Examination, Investigations, Diagnosis, and Key Learning Points. Use simple, clear headings and provide detailed content for each section."
-                    else:
-                        case_context = f"\n\nGenerate key concepts for this case: '{request.case_title}'. Break down the case into clear sections with headings. Include: Objective, Patient Profile, History, Examination, Investigations, Diagnosis, and Key Learning Points. Use simple, clear headings and provide detailed content for each section."
+                # Build case JSON for the prompt
+                import json
+                case_json_data = {}
+                case_id_str = ""
+                case_title_str = request.case_title or "Medical Case"
+                case_difficulty_str = case_difficulty or "Moderate"
                 
-                # Simplified prompt - just generate key concepts with headings
-                system_prompt = f"""Generate key concepts for a medical case based on the document content below.{case_context}
+                if case_doc:
+                    case_id_str = str(case_doc.get("_id", ""))
+                    case_title_str = case_doc.get("title", request.case_title or "Medical Case")
+                    case_difficulty_str = case_doc.get("difficulty", case_difficulty or "Moderate")
+                    case_json_data = {
+                        "case_id": case_id_str,
+                        "title": case_title_str,
+                        "difficulty": case_difficulty_str,
+                        "description": case_doc.get("description", ""),
+                        "key_points": case_doc.get("key_points", [])
+                    }
+                else:
+                    case_json_data = {
+                        "case_id": "",
+                        "title": case_title_str,
+                        "difficulty": case_difficulty_str,
+                        "description": "",
+                        "key_points": []
+                    }
+                
+                # Add demographics if available
+                if age and gender:
+                    gender_normalized = gender
+                    if gender in ['girl', 'female', 'woman']:
+                        gender_normalized = 'female'
+                    elif gender in ['boy', 'male', 'man']:
+                        gender_normalized = 'male'
+                    case_json_data["age"] = age
+                    case_json_data["gender"] = gender_normalized
+                
+                case_json = json.dumps(case_json_data, indent=2)
+                
+                # Extract key_concept from case if available
+                key_concept = ""
+                if case_doc and case_doc.get("key_points") and len(case_doc.get("key_points", [])) > 0:
+                    key_concept = case_doc.get("key_points", [""])[0]
+                
+                # Include case description in prompt if available for better context
+                case_description_text = ""
+                if case_doc and case_doc.get("description"):
+                    case_description_text = f"\n\nCASE DESCRIPTION:\n{case_doc.get('description')}\n"
+                elif case_description:
+                    case_description_text = f"\n\nCASE DESCRIPTION:\n{case_description}\n"
+                
+                # New structured prompt for key concepts
+                identify_concepts_prompt = f"""
+You are an expert medical educator. Based on the SINGLE, SPECIFIC clinical case provided below, generate a structured breakdown of the essential high‑yield concepts a medical student must master to understand THIS PARTICULAR CASE.
 
-Break down the case into clear sections with these headings:
-- Objective
-- Patient Profile  
-- History of Present Illness
-- Past Medical History
-- Medications
-- Examination
-- Initial Investigations
-- Case Progression
-- Final Diagnosis
+CRITICAL REQUIREMENT - UNIQUENESS:
+- The concepts you generate MUST be UNIQUE to this specific case
+- Focus on the SPECIFIC clinical scenario, patient demographics, and case details provided
+- Do NOT generate generic concepts that could apply to any case
+- Each concept must be tied to the SPECIFIC details of this case (age, gender, presentation, etc.)
+- The concepts should reflect what makes THIS case unique and educational
 
-For each section, provide detailed, relevant content based on the document. Use real medical information from the document.
+==============================
 
-Document Content: {document['content'][:4000]}
+INPUT CASE (JSON)
 
-Return a JSON object with these fields:
+==============================
+
+{case_json}{case_description_text}
+
+Use ONLY the information from this SPECIFIC case. You may infer medically standard logic only when clearly implied. Generate concepts that are SPECIFIC to this case's unique clinical scenario.
+
+==============================
+
+OUTPUT FORMAT
+
+==============================
+
+Return a SINGLE JSON object:
+
 {{
-  "id": "concept_1",
-  "title": "{request.case_title if request.case_title else 'Medical Case'}",
-  "objective": "Detailed objective paragraph",
-  "patient_profile": "Patient demographics and presenting complaint",
-  "history_of_present_illness": "Detailed history",
-  "past_medical_history": "Relevant past medical conditions",
-  "medications": "Current medications",
-  "examination": "Physical examination findings",
-  "initial_investigations": "Diagnostic tests and results",
-  "case_progression": "How the case evolves",
-  "final_diagnosis": "Final diagnosis and key learning points",
-  "importance": "High"
+  "id": "concept_{case_id_str}",
+  "case_id": "{case_id_str}",
+  "title": "{case_title_str}",
+  "difficulty": "{case_difficulty_str}",
+  "key_concept": "{key_concept}",
+  "key_concept_summary": "2–4 sentences explaining the clinical concept behind THIS SPECIFIC case, referencing the case title and unique patient details.",
+  "learning_objectives": [
+    "Objective 1 specific to this case's unique scenario...",
+    "Objective 2 specific to this case's unique scenario...",
+    "Objective 3 specific to this case's unique scenario..."
+  ],
+  "core_pathophysiology": "Explain the mechanism or physiology relevant to THIS SPECIFIC case, tied to the specific vignette details (patient age, gender, presentation).",
+  "clinical_reasoning_steps": [
+    "Step 1: ... reasoning tied to SPECIFIC case clues from this case...",
+    "Step 2: ...",
+    "Step 3: ..."
+  ],
+  "red_flags_and_pitfalls": [
+    "Pitfall 1...",
+    "Pitfall 2..."
+  ],
+  "differential_diagnosis_framework": [
+    "Dx 1: justification...",
+    "Dx 2: justification...",
+    "Dx 3: justification..."
+  ],
+  "important_labs_imaging_to_know": [
+    "Lab/imaging 1 and why it matters...",
+    "Lab/imaging 2..."
+  ],
+  "why_this_case_matters": "Short explanation connecting the case to real-world practice and exam relevance."
 }}
 
-Return ONLY valid JSON, no markdown formatting."""
+RULES:
+- No markdown.
+- No extra text.
+- JSON ONLY.
+- ALL content must be SPECIFIC to this case - reference the case title, patient demographics, and specific clinical details.
+- Do NOT generate generic concepts that could apply to multiple cases.
+- Tie every learning objective, reasoning step, and concept to the SPECIFIC details of this case.
+"""
+                
+                system_prompt = identify_concepts_prompt
         
                 # Generate response from OpenAI
                 print(f"🔄 Attempt {retry_count + 1} of {max_retries + 1} to generate concepts...")
@@ -3416,7 +3507,7 @@ Return ONLY valid JSON, no markdown formatting."""
                     first_concept = concepts_data[0]
                     description = first_concept.get("description", "")
                     
-                    # Check if structured fields are present (new format)
+                    # Check if structured fields are present (new format or old format)
                     has_structured_fields = bool(
                         first_concept.get("objective") or 
                         first_concept.get("patient_profile") or 
@@ -3426,7 +3517,16 @@ Return ONLY valid JSON, no markdown formatting."""
                         first_concept.get("examination") or
                         first_concept.get("initial_investigations") or
                         first_concept.get("case_progression") or
-                        first_concept.get("final_diagnosis")
+                        first_concept.get("final_diagnosis") or
+                        # New format fields
+                        first_concept.get("key_concept_summary") or
+                        first_concept.get("learning_objectives") or
+                        first_concept.get("core_pathophysiology") or
+                        first_concept.get("clinical_reasoning_steps") or
+                        first_concept.get("red_flags_and_pitfalls") or
+                        first_concept.get("differential_diagnosis_framework") or
+                        first_concept.get("important_labs_imaging_to_know") or
+                        first_concept.get("why_this_case_matters")
                     )
                     
                     # For non-Easy/non-first cases, do normal validation
@@ -3498,46 +3598,41 @@ Return ONLY valid JSON, no markdown formatting."""
                             raise ValueError("Description is too generic and lacks specific case details")
                     
                     # Check if we have structured fields with substantial real content
-                    # For Easy cases, be more lenient with content length requirements
+                    # Support both old format (objective, patient_profile, etc.) and new format (key_concept_summary, learning_objectives, etc.)
                     content_length = 0
                     structured_fields_present = False
                     
-                    # Check structured fields - count all content regardless of individual field length
-                    if first_concept.get("objective"):
-                        content_length += len(first_concept.get("objective", ""))
-                        structured_fields_present = True
+                    # Check old format structured fields
+                    old_format_fields = [
+                        "objective", "patient_profile", "history_of_present_illness",
+                        "past_medical_history", "medications", "examination",
+                        "initial_investigations", "case_progression", "final_diagnosis"
+                    ]
+                    for field in old_format_fields:
+                        if first_concept.get(field):
+                            content_length += len(str(first_concept.get(field, "")))
+                            structured_fields_present = True
                     
-                    if first_concept.get("patient_profile"):
-                        content_length += len(first_concept.get("patient_profile", ""))
-                        structured_fields_present = True
+                    # Check new format structured fields
+                    new_format_fields = [
+                        "key_concept_summary", "core_pathophysiology", "why_this_case_matters"
+                    ]
+                    for field in new_format_fields:
+                        if first_concept.get(field):
+                            content_length += len(str(first_concept.get(field, "")))
+                            structured_fields_present = True
                     
-                    if first_concept.get("history_of_present_illness"):
-                        content_length += len(first_concept.get("history_of_present_illness", ""))
-                        structured_fields_present = True
-                    
-                    if first_concept.get("past_medical_history"):
-                        content_length += len(first_concept.get("past_medical_history", ""))
-                        structured_fields_present = True
-                    
-                    if first_concept.get("medications"):
-                        content_length += len(first_concept.get("medications", ""))
-                        structured_fields_present = True
-                    
-                    if first_concept.get("examination"):
-                        content_length += len(first_concept.get("examination", ""))
-                        structured_fields_present = True
-                    
-                    if first_concept.get("initial_investigations"):
-                        content_length += len(first_concept.get("initial_investigations", ""))
-                        structured_fields_present = True
-                    
-                    if first_concept.get("case_progression"):
-                        content_length += len(first_concept.get("case_progression", ""))
-                        structured_fields_present = True
-                    
-                    if first_concept.get("final_diagnosis"):
-                        content_length += len(first_concept.get("final_diagnosis", ""))
-                        structured_fields_present = True
+                    # Check array fields in new format
+                    array_fields = [
+                        "learning_objectives", "clinical_reasoning_steps",
+                        "red_flags_and_pitfalls", "differential_diagnosis_framework",
+                        "important_labs_imaging_to_know"
+                    ]
+                    for field in array_fields:
+                        if first_concept.get(field) and isinstance(first_concept.get(field), list):
+                            content_length += sum(len(str(item)) for item in first_concept.get(field, []))
+                            if len(first_concept.get(field, [])) > 0:
+                                structured_fields_present = True
                     
                     # Check description if no structured fields or as additional content
                     if description:
@@ -3630,9 +3725,41 @@ Return ONLY valid JSON, no markdown formatting."""
             if not concept_data.get("importance"):
                 concept_data["importance"] = "High"
             
-            # If new format with separate fields, construct description from them
-            if concept_data.get("objective") or concept_data.get("patient_profile"):
-                # New format - build description from separate fields
+            # Handle different formats: new format (key_concept_summary, learning_objectives) or old format (objective, patient_profile)
+            # Priority: new format first, then old format, then fallback to description
+            if concept_data.get("key_concept_summary") or concept_data.get("learning_objectives"):
+                # New format - build description from new structured fields
+                description_parts = []
+                if concept_data.get("key_concept_summary"):
+                    description_parts.append(f"Key Concept Summary: {concept_data.get('key_concept_summary')}")
+                if concept_data.get("learning_objectives") and isinstance(concept_data.get("learning_objectives"), list):
+                    description_parts.append("\n\nLearning Objectives:")
+                    for obj in concept_data.get("learning_objectives", []):
+                        description_parts.append(f"\n- {obj}")
+                if concept_data.get("core_pathophysiology"):
+                    description_parts.append(f"\n\nCore Pathophysiology: {concept_data.get('core_pathophysiology')}")
+                if concept_data.get("clinical_reasoning_steps") and isinstance(concept_data.get("clinical_reasoning_steps"), list):
+                    description_parts.append("\n\nClinical Reasoning Steps:")
+                    for step in concept_data.get("clinical_reasoning_steps", []):
+                        description_parts.append(f"\n{step}")
+                if concept_data.get("red_flags_and_pitfalls") and isinstance(concept_data.get("red_flags_and_pitfalls"), list):
+                    description_parts.append("\n\nRed Flags and Pitfalls:")
+                    for pitfall in concept_data.get("red_flags_and_pitfalls", []):
+                        description_parts.append(f"\n- {pitfall}")
+                if concept_data.get("differential_diagnosis_framework") and isinstance(concept_data.get("differential_diagnosis_framework"), list):
+                    description_parts.append("\n\nDifferential Diagnosis Framework:")
+                    for dx in concept_data.get("differential_diagnosis_framework", []):
+                        description_parts.append(f"\n{dx}")
+                if concept_data.get("important_labs_imaging_to_know") and isinstance(concept_data.get("important_labs_imaging_to_know"), list):
+                    description_parts.append("\n\nImportant Labs/Imaging to Know:")
+                    for lab in concept_data.get("important_labs_imaging_to_know", []):
+                        description_parts.append(f"\n- {lab}")
+                if concept_data.get("why_this_case_matters"):
+                    description_parts.append(f"\n\nWhy This Case Matters: {concept_data.get('why_this_case_matters')}")
+                
+                concept_data["description"] = "".join(description_parts)
+            elif concept_data.get("objective") or concept_data.get("patient_profile"):
+                # Old format - build description from separate fields
                 description_parts = []
                 if concept_data.get("objective"):
                     description_parts.append(f"Objective: {concept_data.get('objective')}")
@@ -3661,8 +3788,13 @@ Return ONLY valid JSON, no markdown formatting."""
                 concept_data["description"] = concept_data.get("title", "Medical concept from document")
                 print(f"⚠️ WARNING: No description field found, using title as description")
             
+            # Ensure case_title is set on the concept for proper storage and retrieval
+            if not concept_data.get("case_title") and request.case_title:
+                concept_data["case_title"] = request.case_title
+                print(f"✅ Set case_title '{request.case_title}' on concept")
+            
             concepts = [Concept(**concept_data)]
-            print(f"✅ Successfully created Concept object: {concepts[0].title}")
+            print(f"✅ Successfully created Concept object: {concepts[0].title} for case: {concept_data.get('case_title', 'NO CASE_TITLE')}")
         except Exception as e:
             print(f"❌ ERROR: Failed to create Concept object: {e}")
             print(f"❌ Concept data: {concepts_data[0] if concepts_data else 'None'}")
@@ -4564,30 +4696,98 @@ async def chat_with_ai(
         print("AI: Creating prompt...")
         
         # Check if this is an explore cases request (when case_title is present in request)
-        # For explore cases, use conversational format
+        # For explore cases, use conversational format with full case details
         case_title = request.case_title
+        case_difficulty = None
+        case_key_concept = None
+        case_description = None
         
         if case_title:
-            # Explore Cases Mode: Conversational format - no bullet points, natural conversation
-            system_prompt = f"""You are an expert Medical Educator having a natural, conversational discussion with a medical student about a clinical case. 
-
-Case Context: {case_title}
-
-User Question: {request.message}
-
-CRITICAL FORMATTING REQUIREMENTS:
-- Respond in a natural, conversational manner - like you're talking to a colleague or student
-- DO NOT use bullet points, numbered lists, or any structured formatting
-- Write in flowing paragraphs, as if having a conversation
-- Use natural transitions between ideas
-- Be clear and educational, but maintain a conversational tone
-- Respond as if you're explaining concepts in person, not writing a formal document
-
-Provide a comprehensive, clinically accurate explanation that flows naturally like a conversation. Reference the case context when relevant, and explain medical concepts in a way that feels like a discussion rather than a structured presentation.
-
-{document_context}"""
+            # Fetch full case details to make the prompt unique to this specific case
+            try:
+                doc_id_str = str(document["_id"]) if document else None
+                case_doc = None
+                if doc_id_str:
+                    case_doc = db.generated_cases.find_one({
+                        "title": case_title,
+                        "document_id": doc_id_str
+                    })
+                if not case_doc:
+                    case_doc = db.generated_cases.find_one({
+                        "title": case_title
+                    })
+                
+                if case_doc:
+                    case_difficulty = case_doc.get("difficulty", "Moderate")
+                    case_key_concept = ""
+                    if case_doc.get("key_points") and len(case_doc.get("key_points", [])) > 0:
+                        case_key_concept = case_doc.get("key_points", [""])[0]
+                    case_description = case_doc.get("description", "")
+            except Exception as e:
+                print(f"⚠️ Warning: Could not fetch case details: {e}")
+                # Continue with just case_title if fetch fails
             
-            system_role = "You are an expert Medical Educator having a natural, conversational discussion with a medical student. Respond in flowing paragraphs without bullet points or structured formatting - just like a natural conversation."
+            # Use default values if case details not found
+            if not case_difficulty:
+                case_difficulty = "Moderate"
+            if not case_key_concept:
+                case_key_concept = ""
+            if not case_description:
+                case_description = ""
+            
+            # Explore Cases Mode: Conversational format with case-specific context
+            explore_case_system_prompt = f"""
+You are an expert Medical Educator having a natural, back‑and‑forth conversation with a medical student about a clinical case.
+
+==============================
+
+CASE CONTEXT
+
+==============================
+
+Case Title: {case_title}
+
+Difficulty: {case_difficulty}
+
+Key Concept: {case_key_concept}
+
+Case Description: {case_description}
+
+==============================
+
+BEHAVIOR RULES
+
+==============================
+
+Always:
+
+- Directly answer the student's question conversationally.
+
+- Then expand with relevant clinical reasoning.
+
+- Speak warmly and naturally — no lecturing tone.
+
+- Refer to details from THIS case.
+
+- Interpret vague questions generously.
+
+- No bullet points, no numbered lists, no headings.
+
+- Use flowing, natural paragraphs only.
+
+Your goal:
+
+Help the student understand the case as if you're sitting beside them, guiding their reasoning.
+
+Input:
+
+Student Question → {request.message}
+
+{document_context}
+"""
+            
+            system_prompt = explore_case_system_prompt
+            system_role = "You are an expert Medical Educator having a natural, back-and-forth conversation with a medical student about a clinical case. Respond in flowing paragraphs without bullet points or structured formatting - just like a natural conversation."
         else:
             # General chat mode: standard medical assistant
             system_prompt = f"""Medical AI assistant. Provide concise, accurate answers.
@@ -4856,6 +5056,42 @@ async def send_chat_message(
     
     # Check if this is an explore cases request (when case_title is present in request or chat)
     case_title = request.case_title or chat.get("case_title")
+    case_difficulty = None
+    case_key_concept = None
+    case_description = None
+    
+    # Fetch full case details if case_title is provided
+    if case_title:
+        try:
+            doc_id_str = document_id if document_id else None
+            case_doc = None
+            if doc_id_str:
+                case_doc = db.generated_cases.find_one({
+                    "title": case_title,
+                    "document_id": doc_id_str
+                })
+            if not case_doc:
+                case_doc = db.generated_cases.find_one({
+                    "title": case_title
+                })
+            
+            if case_doc:
+                case_difficulty = case_doc.get("difficulty", "Moderate")
+                case_key_concept = ""
+                if case_doc.get("key_points") and len(case_doc.get("key_points", [])) > 0:
+                    case_key_concept = case_doc.get("key_points", [""])[0]
+                case_description = case_doc.get("description", "")
+        except Exception as e:
+            print(f"⚠️ Warning: Could not fetch case details: {e}")
+            # Continue with just case_title if fetch fails
+        
+        # Use default values if case details not found
+        if not case_difficulty:
+            case_difficulty = "Moderate"
+        if not case_key_concept:
+            case_key_concept = ""
+        if not case_description:
+            case_description = ""
     
     try:
         # Use OpenAI GPT-4 mini
@@ -4863,26 +5099,59 @@ async def send_chat_message(
             raise Exception("OpenAI client not initialized")
         
         if case_title:
-            # Explore Cases Mode: Conversational format - no bullet points, natural conversation
-            system_prompt = f"""You are an expert Medical Educator having a natural, conversational discussion with a medical student about a clinical case. 
+            # Explore Cases Mode: Conversational format with case-specific context
+            explore_case_system_prompt = f"""
+You are an expert Medical Educator having a natural, back‑and‑forth conversation with a medical student about a clinical case.
 
-Case Context: {case_title}
+==============================
 
-User Question: {request.message}
+CASE CONTEXT
 
-CRITICAL FORMATTING REQUIREMENTS:
-- Respond in a natural, conversational manner - like you're talking to a colleague or student
-- DO NOT use bullet points, numbered lists, or any structured formatting
-- Write in flowing paragraphs, as if having a conversation
-- Use natural transitions between ideas
-- Be clear and educational, but maintain a conversational tone
-- Respond as if you're explaining concepts in person, not writing a formal document
+==============================
 
-Provide a comprehensive, clinically accurate explanation that flows naturally like a conversation. Reference the case context when relevant, and explain medical concepts in a way that feels like a discussion rather than a structured presentation.
+Case Title: {case_title}
 
-{document_context}"""
+Difficulty: {case_difficulty}
+
+Key Concept: {case_key_concept}
+
+Case Description: {case_description}
+
+==============================
+
+BEHAVIOR RULES
+
+==============================
+
+Always:
+
+- Directly answer the student's question conversationally.
+
+- Then expand with relevant clinical reasoning.
+
+- Speak warmly and naturally — no lecturing tone.
+
+- Refer to details from THIS case.
+
+- Interpret vague questions generously.
+
+- No bullet points, no numbered lists, no headings.
+
+- Use flowing, natural paragraphs only.
+
+Your goal:
+
+Help the student understand the case as if you're sitting beside them, guiding their reasoning.
+
+Input:
+
+Student Question → {request.message}
+
+{document_context}
+"""
             
-            system_role = "You are an expert Medical Educator having a natural, conversational discussion with a medical student. Respond in flowing paragraphs without bullet points or structured formatting - just like a natural conversation."
+            system_prompt = explore_case_system_prompt
+            system_role = "You are an expert Medical Educator having a natural, back-and-forth conversation with a medical student about a clinical case. Respond in flowing paragraphs without bullet points or structured formatting - just like a natural conversation."
         else:
             # General chat mode: standard medical assistant
             system_prompt = f"""Medical AI assistant. Provide concise, accurate answers.
@@ -5098,7 +5367,7 @@ async def save_generated_content(
                     "title": concept.get("title", ""),
                     "description": concept.get("description", ""),
                     "importance": concept.get("importance", "medium"),
-                    # Save all structured fields if present
+                    # Save old format structured fields if present
                     "objective": concept.get("objective"),
                     "patient_profile": concept.get("patient_profile"),
                     "history_of_present_illness": concept.get("history_of_present_illness"),
@@ -5108,6 +5377,17 @@ async def save_generated_content(
                     "initial_investigations": concept.get("initial_investigations"),
                     "case_progression": concept.get("case_progression"),
                     "final_diagnosis": concept.get("final_diagnosis"),
+                    # Save new format structured fields if present
+                    "case_id": concept.get("case_id"),
+                    "key_concept": concept.get("key_concept"),
+                    "key_concept_summary": concept.get("key_concept_summary"),
+                    "learning_objectives": concept.get("learning_objectives"),
+                    "core_pathophysiology": concept.get("core_pathophysiology"),
+                    "clinical_reasoning_steps": concept.get("clinical_reasoning_steps"),
+                    "red_flags_and_pitfalls": concept.get("red_flags_and_pitfalls"),
+                    "differential_diagnosis_framework": concept.get("differential_diagnosis_framework"),
+                    "important_labs_imaging_to_know": concept.get("important_labs_imaging_to_know"),
+                    "why_this_case_matters": concept.get("why_this_case_matters"),
                     "created_at": datetime.utcnow()
                 }
                 db.generated_concepts.insert_one(concept_doc)

@@ -174,7 +174,7 @@ export interface Concept {
   description: string;
   importance: string;
   case_title?: string;
-  // New structured fields for case breakdown
+  // Old format structured fields for case breakdown
   objective?: string;
   patient_profile?: string;
   history_of_present_illness?: string;
@@ -184,6 +184,17 @@ export interface Concept {
   initial_investigations?: string;
   case_progression?: string;
   final_diagnosis?: string;
+  // New format structured fields for key concepts
+  case_id?: string;
+  key_concept?: string;
+  key_concept_summary?: string;
+  learning_objectives?: string[];
+  core_pathophysiology?: string;
+  clinical_reasoning_steps?: string[];
+  red_flags_and_pitfalls?: string[];
+  differential_diagnosis_framework?: string[];
+  important_labs_imaging_to_know?: string[];
+  why_this_case_matters?: string;
 }
 
 export interface ConceptResponse {

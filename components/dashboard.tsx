@@ -543,20 +543,25 @@ export function Dashboard({}: DashboardProps) {
     if (currentView !== "identify-concepts") {
       // Clear the attempted ref when leaving the view so it can regenerate on next visit
       conceptAutoAttemptedRef.current.clear();
-      setIsLoadingConcepts(false);
+      // Don't set loading state - no loading screen
+      // setIsLoadingConcepts(false);
       return;
     }
     if (!selectedCase) {
-      setIsLoadingConcepts(false);
+      // Don't set loading state - no loading screen
+      // setIsLoadingConcepts(false);
       return;
     }
     if (!activeChat) {
-      setIsLoadingConcepts(false);
+      // Don't set loading state - no loading screen
+      // setIsLoadingConcepts(false);
       return;
     }
 
-    // Set loading state
+    // Set loading state with minimum 3 second display to prevent brief flash of previous content
     setIsLoadingConcepts(true);
+    const loadStartTime = Date.now();
+    const minLoadTime = 3000; // 3 seconds minimum
 
     // Always reload concepts from database when entering the view (like MCQs do)
     console.log(
@@ -565,14 +570,19 @@ export function Dashboard({}: DashboardProps) {
     );
     loadActiveChatContent(activeChat)
       .then(() => {
-        // Use 2 second delay for loading key concepts
+        // Calculate remaining time to ensure minimum 3 second loading
+        const elapsed = Date.now() - loadStartTime;
+        const remainingTime = Math.max(0, minLoadTime - elapsed);
+
+        // Use remaining time or 2 seconds, whichever is longer
         setTimeout(() => {
           // Double-check selectedCase is still set (in case it was cleared)
           if (!selectedCase) {
             console.log(
               "⚠️ selectedCase is empty after load, skipping concept check"
             );
-            setIsLoadingConcepts(false);
+            // Don't set loading state - no loading screen
+            // setIsLoadingConcepts(false);
             return;
           }
 
@@ -581,22 +591,50 @@ export function Dashboard({}: DashboardProps) {
           // This prevents false positives where concepts from other cases are found
           let conceptsForCase: any[] = generatedConcepts[selectedCase] || [];
 
-          // FORCE first case to have 0 concepts to ensure it always generates
+          // Check if first case has valid concepts before clearing
+          // Only clear if concepts don't have all required fields
           const firstCaseTitle =
             generatedCases.length > 0 ? generatedCases[0].title : null;
-          if (selectedCase === firstCaseTitle) {
-            console.log(
-              `🔧 Force clearing concepts for first case "${selectedCase}" to ensure generation`
-            );
-            conceptsForCase = [];
-            // Also clear from state to prevent any cached concepts
-            setGeneratedConcepts((prev) => {
-              const updated = { ...prev };
-              delete updated[selectedCase];
-              return updated;
-            });
-            // Clear from attempted ref
-            conceptAutoAttemptedRef.current.delete(selectedCase);
+          if (selectedCase === firstCaseTitle && conceptsForCase.length > 0) {
+            // Check if concepts have all required fields (new or old format)
+            const firstConcept = conceptsForCase[0];
+            const hasNewFormatFields =
+              (firstConcept.key_concept_summary &&
+                firstConcept.key_concept_summary.trim().length > 10) ||
+              (firstConcept.learning_objectives &&
+                Array.isArray(firstConcept.learning_objectives) &&
+                firstConcept.learning_objectives.length > 0) ||
+              (firstConcept.core_pathophysiology &&
+                firstConcept.core_pathophysiology.trim().length > 10);
+            const hasOldFormatFields =
+              (firstConcept.objective &&
+                firstConcept.objective.trim().length > 10) ||
+              (firstConcept.patient_profile &&
+                firstConcept.patient_profile.trim().length > 10) ||
+              (firstConcept.history_of_present_illness &&
+                firstConcept.history_of_present_illness.trim().length > 10);
+
+            // Only clear if concepts don't have valid fields
+            if (!hasNewFormatFields && !hasOldFormatFields) {
+              console.log(
+                `🔧 Force clearing concepts for first case "${selectedCase}" - no valid fields found`
+              );
+              conceptsForCase = [];
+              // Also clear from state to prevent any cached concepts
+              setGeneratedConcepts((prev) => {
+                const updated = { ...prev };
+                delete updated[selectedCase];
+                return updated;
+              });
+              // Clear from attempted ref
+              conceptAutoAttemptedRef.current.delete(selectedCase);
+            } else {
+              console.log(
+                `✅ First case "${selectedCase}" has valid concepts with ${
+                  hasNewFormatFields ? "new" : "old"
+                } format - persisting`
+              );
+            }
           }
 
           // Only use exact match - if no exact match, concepts don't exist for this case
@@ -630,6 +668,8 @@ export function Dashboard({}: DashboardProps) {
             conceptsForCase.some((concept: any, index: number) => {
               // Check if concept has actual content (title, description, or structured fields)
               const hasTitle = concept.title && concept.title.trim().length > 0;
+
+              // Check old format fields
               const hasDescription =
                 concept.description && concept.description.trim().length > 10; // At least 10 chars
               const hasObjective =
@@ -646,33 +686,111 @@ export function Dashboard({}: DashboardProps) {
                 concept.final_diagnosis &&
                 concept.final_diagnosis.trim().length > 10;
 
-              const isValid =
-                hasTitle &&
-                (hasDescription ||
-                  hasObjective ||
-                  hasPatientProfile ||
-                  hasHistory ||
-                  hasExamination ||
-                  hasDiagnosis);
+              // Check new format fields
+              const hasKeyConceptSummary =
+                concept.key_concept_summary &&
+                concept.key_concept_summary.trim().length > 10;
+              const hasLearningObjectives =
+                concept.learning_objectives &&
+                Array.isArray(concept.learning_objectives) &&
+                concept.learning_objectives.length > 0 &&
+                concept.learning_objectives.some(
+                  (obj: string) => obj && obj.trim().length > 0
+                );
+              const hasCorePathophysiology =
+                concept.core_pathophysiology &&
+                concept.core_pathophysiology.trim().length > 10;
+              const hasClinicalReasoningSteps =
+                concept.clinical_reasoning_steps &&
+                Array.isArray(concept.clinical_reasoning_steps) &&
+                concept.clinical_reasoning_steps.length > 0 &&
+                concept.clinical_reasoning_steps.some(
+                  (step: string) => step && step.trim().length > 0
+                );
+              const hasRedFlags =
+                concept.red_flags_and_pitfalls &&
+                Array.isArray(concept.red_flags_and_pitfalls) &&
+                concept.red_flags_and_pitfalls.length > 0 &&
+                concept.red_flags_and_pitfalls.some(
+                  (flag: string) => flag && flag.trim().length > 0
+                );
+              const hasDifferentialDiagnosis =
+                concept.differential_diagnosis_framework &&
+                Array.isArray(concept.differential_diagnosis_framework) &&
+                concept.differential_diagnosis_framework.length > 0 &&
+                concept.differential_diagnosis_framework.some(
+                  (dx: string) => dx && dx.trim().length > 0
+                );
+              const hasLabsImaging =
+                concept.important_labs_imaging_to_know &&
+                Array.isArray(concept.important_labs_imaging_to_know) &&
+                concept.important_labs_imaging_to_know.length > 0 &&
+                concept.important_labs_imaging_to_know.some(
+                  (lab: string) => lab && lab.trim().length > 0
+                );
+              const hasWhyThisCaseMatters =
+                concept.why_this_case_matters &&
+                concept.why_this_case_matters.trim().length > 10;
+
+              // Check if concept has new format OR old format fields
+              const hasOldFormat =
+                hasDescription ||
+                hasObjective ||
+                hasPatientProfile ||
+                hasHistory ||
+                hasExamination ||
+                hasDiagnosis;
+
+              const hasNewFormat =
+                hasKeyConceptSummary ||
+                hasLearningObjectives ||
+                hasCorePathophysiology ||
+                hasClinicalReasoningSteps ||
+                hasRedFlags ||
+                hasDifferentialDiagnosis ||
+                hasLabsImaging ||
+                hasWhyThisCaseMatters;
+
+              const isValid = hasTitle && (hasOldFormat || hasNewFormat);
 
               // Require at least title AND one substantial field (not just title alone)
               return isValid;
             });
 
           if (hasValidConcepts) {
-            console.log(`✅ Valid concepts found for "${selectedCase}"`);
+            // Log which format was detected
+            const firstConcept = conceptsForCase[0];
+            const hasNewFormat =
+              firstConcept?.key_concept_summary ||
+              (firstConcept?.learning_objectives &&
+                firstConcept.learning_objectives.length > 0) ||
+              firstConcept?.core_pathophysiology;
+            const hasOldFormat =
+              firstConcept?.objective ||
+              firstConcept?.patient_profile ||
+              firstConcept?.history_of_present_illness;
+            console.log(
+              `✅ Valid concepts found for "${selectedCase}" (${
+                hasNewFormat ? "new" : hasOldFormat ? "old" : "unknown"
+              } format)`
+            );
           } else if (conceptsForCase.length > 0) {
             console.log(
-              `⚠️ Invalid concepts for "${selectedCase}" - will regenerate`
+              `⚠️ Invalid concepts for "${selectedCase}" - will regenerate (concepts exist but lack valid content)`
             );
           }
 
           if (hasValidConcepts) {
-            // Valid concepts found - clear loading immediately
+            // Valid concepts found - wait for minimum loading time before clearing
             console.log(
               `✅ Valid concepts found for "${selectedCase}", skipping generation`
             );
-            setIsLoadingConcepts(false);
+            // Calculate remaining time to ensure minimum 3 second loading
+            const elapsed = Date.now() - loadStartTime;
+            const remainingTime = Math.max(0, minLoadTime - elapsed);
+            setTimeout(() => {
+              setIsLoadingConcepts(false);
+            }, remainingTime);
             return;
           } else if (conceptsForCase.length > 0) {
             // Concepts exist but are invalid/empty - clear them and allow regeneration
@@ -688,8 +806,16 @@ export function Dashboard({}: DashboardProps) {
             conceptAutoAttemptedRef.current.delete(selectedCase);
           }
 
-          // Concepts not found - clear loading and trigger generation
-          setIsLoadingConcepts(false);
+          // Concepts not found - wait for minimum loading time before clearing
+          // Calculate remaining time to ensure minimum 3 second loading
+          const elapsedNotFound = Date.now() - loadStartTime;
+          const remainingTimeNotFound = Math.max(
+            0,
+            minLoadTime - elapsedNotFound
+          );
+          setTimeout(() => {
+            setIsLoadingConcepts(false);
+          }, remainingTimeNotFound);
 
           // Auto-generate if concepts don't exist and we haven't already attempted
           // This works for ALL cases including the first one
@@ -724,11 +850,16 @@ export function Dashboard({}: DashboardProps) {
               reasons.join(", ")
             );
           }
-        }, 2000); // 2 second delay for loading key concepts
+        }, remainingTime); // Use calculated remaining time to ensure minimum 3 second loading
       })
       .catch((error) => {
         console.error("❌ Failed to load concepts:", error);
-        setIsLoadingConcepts(false);
+        // Ensure minimum loading time even on error
+        const elapsed = Date.now() - loadStartTime;
+        const remainingTime = Math.max(0, minLoadTime - elapsed);
+        setTimeout(() => {
+          setIsLoadingConcepts(false);
+        }, remainingTime);
       });
   }, [currentView, selectedCase, activeChat]);
 
@@ -985,12 +1116,38 @@ export function Dashboard({}: DashboardProps) {
             if (!conceptGroups[caseTitle]) {
               conceptGroups[caseTitle] = [];
             }
-            // Store the full concept object
+            // Store the full concept object with all fields (old and new format)
+            // Log concept fields for debugging
+            const hasNewFormat =
+              concept.key_concept_summary ||
+              (concept.learning_objectives &&
+                concept.learning_objectives.length > 0) ||
+              concept.core_pathophysiology ||
+              (concept.clinical_reasoning_steps &&
+                concept.clinical_reasoning_steps.length > 0);
+            const hasOldFormat =
+              concept.objective ||
+              concept.patient_profile ||
+              concept.history_of_present_illness;
+
+            if (hasNewFormat || hasOldFormat) {
+              console.log(
+                `✅ Loaded concept for "${caseTitle}" with ${
+                  hasNewFormat ? "new" : "old"
+                } format fields`
+              );
+            }
+
             conceptGroups[caseTitle].push(concept);
           }
         });
         // REPLACE concepts (don't merge) to ensure clean state per chat
         setGeneratedConcepts(conceptGroups);
+        console.log(
+          `✅ Loaded ${content.concepts.length} concepts grouped into ${
+            Object.keys(conceptGroups).length
+          } cases`
+        );
       } else {
         // Clear concepts if none found
         setGeneratedConcepts({});
@@ -4183,7 +4340,8 @@ export function Dashboard({}: DashboardProps) {
         setTimeout(() => {
           console.log("🔧 Actually clearing state now");
           setIsGeneratingConcepts(false);
-          setIsLoadingConcepts(false);
+          // Don't set loading state - no loading screen
+          // setIsLoadingConcepts(false);
           setShowRegeneratingMessage(false);
           setAutoLoadingProgress("");
           conceptGenerationRef.current = false;
@@ -4312,8 +4470,14 @@ export function Dashboard({}: DashboardProps) {
     const caseBreakdown =
       hasConcepts && concepts.length > 0 ? concepts[0] : null;
 
-    // Check if we have new structured format (separate fields) or old format (description to parse)
-    const hasStructuredFields =
+    // Check if we have new format (key_concept_summary, learning_objectives) or old format (objective, patient_profile)
+    const hasNewFormat =
+      caseBreakdown &&
+      (caseBreakdown.key_concept_summary ||
+        caseBreakdown.learning_objectives ||
+        caseBreakdown.core_pathophysiology);
+
+    const hasOldFormat =
       caseBreakdown &&
       (caseBreakdown.objective ||
         caseBreakdown.patient_profile ||
@@ -4321,8 +4485,48 @@ export function Dashboard({}: DashboardProps) {
 
     // Build sections from structured fields if available, otherwise parse description
     const caseSections: Record<string, string> = {};
-    if (hasStructuredFields && caseBreakdown) {
-      // New structured format - use fields directly
+    if (hasNewFormat && caseBreakdown) {
+      // New format - use new structured fields
+      if (caseBreakdown.key_concept_summary)
+        caseSections["Key Concept Summary"] = caseBreakdown.key_concept_summary;
+      if (
+        caseBreakdown.learning_objectives &&
+        Array.isArray(caseBreakdown.learning_objectives)
+      )
+        caseSections["Learning Objectives"] =
+          caseBreakdown.learning_objectives.join("\n• ");
+      if (caseBreakdown.core_pathophysiology)
+        caseSections["Core Pathophysiology"] =
+          caseBreakdown.core_pathophysiology;
+      if (
+        caseBreakdown.clinical_reasoning_steps &&
+        Array.isArray(caseBreakdown.clinical_reasoning_steps)
+      )
+        caseSections["Clinical Reasoning Steps"] =
+          caseBreakdown.clinical_reasoning_steps.join("\n");
+      if (
+        caseBreakdown.red_flags_and_pitfalls &&
+        Array.isArray(caseBreakdown.red_flags_and_pitfalls)
+      )
+        caseSections["Red Flags and Pitfalls"] =
+          caseBreakdown.red_flags_and_pitfalls.join("\n• ");
+      if (
+        caseBreakdown.differential_diagnosis_framework &&
+        Array.isArray(caseBreakdown.differential_diagnosis_framework)
+      )
+        caseSections["Differential Diagnosis Framework"] =
+          caseBreakdown.differential_diagnosis_framework.join("\n");
+      if (
+        caseBreakdown.important_labs_imaging_to_know &&
+        Array.isArray(caseBreakdown.important_labs_imaging_to_know)
+      )
+        caseSections["Important Labs/Imaging to Know"] =
+          caseBreakdown.important_labs_imaging_to_know.join("\n• ");
+      if (caseBreakdown.why_this_case_matters)
+        caseSections["Why This Case Matters"] =
+          caseBreakdown.why_this_case_matters;
+    } else if (hasOldFormat && caseBreakdown) {
+      // Old format - use old structured fields
       if (caseBreakdown.objective)
         caseSections["Objective"] = caseBreakdown.objective;
       if (caseBreakdown.patient_profile)
@@ -4346,11 +4550,6 @@ export function Dashboard({}: DashboardProps) {
       if (caseBreakdown.final_diagnosis)
         caseSections["Final Diagnosis/Learning Anchor"] =
           caseBreakdown.final_diagnosis;
-
-      console.log(
-        "✅ Using structured fields format:",
-        Object.keys(caseSections)
-      );
     }
 
     const caseDescription = caseBreakdown?.description || "";
@@ -4512,9 +4711,10 @@ export function Dashboard({}: DashboardProps) {
     };
 
     // Parse description only if we don't have structured fields
-    const parsedSections = hasStructuredFields
-      ? caseSections
-      : parseCaseDescription(caseDescription);
+    const parsedSections =
+      hasNewFormat || hasOldFormat
+        ? caseSections
+        : parseCaseDescription(caseDescription);
 
     // Use parsed sections or case sections
     let finalCaseSections =
@@ -4545,16 +4745,12 @@ export function Dashboard({}: DashboardProps) {
                 <h3 className="text-lg font-medium text-gray-900 mb-2">
                   {isLoadingConcepts
                     ? "Loading Key Concepts"
-                    : isGeneratingConcepts
-                    ? "Generating Case Breakdown..."
-                    : "Generating Case Breakdown"}
+                    : "Generating Case Breakdown..."}
                 </h3>
                 <p className="text-gray-600 mb-4">
                   {isLoadingConcepts
                     ? "Loading concepts from database..."
-                    : isGeneratingConcepts
-                    ? "Analyzing your document and generating key concepts. This may take a few moments..."
-                    : "Analyzing your document to create a detailed case breakdown..."}
+                    : "Analyzing your document and generating key concepts. This may take a few moments..."}
                 </p>
                 <div className="w-full bg-gray-200 rounded-full h-2 overflow-hidden">
                   <div
@@ -4740,162 +4936,305 @@ export function Dashboard({}: DashboardProps) {
                         </div>
                       )}
 
-                    {caseDescription && (
+                    {(caseDescription ||
+                      Object.keys(finalCaseSections).length > 0) && (
                       <>
                         {/* If parsing found sections, show them; otherwise show raw description */}
                         {Object.keys(finalCaseSections).length > 0 ? (
                           <>
-                            {/* Objective - Always show */}
-                            {finalCaseSections["Objective"] && (
+                            {/* New Format Sections */}
+                            {finalCaseSections["Key Concept Summary"] && (
                               <div>
                                 <h2 className="text-lg font-semibold text-gray-900 mb-2">
-                                  Objective
+                                  Key Concept Summary
                                 </h2>
                                 <p className="text-gray-700 whitespace-pre-line">
-                                  {finalCaseSections["Objective"]}
+                                  {finalCaseSections["Key Concept Summary"]}
                                 </p>
                               </div>
                             )}
 
-                            {/* Case Presentation - Always show with all subsections */}
-                            {(finalCaseSections["Case Presentation"] ||
-                              finalCaseSections["Patient Profile"] ||
-                              finalCaseSections[
-                                "History of Present Illness"
-                              ]) && (
+                            {finalCaseSections["Learning Objectives"] && (
                               <div>
-                                <h2 className="text-lg font-semibold text-gray-900 mb-3">
-                                  Case Presentation
+                                <h2 className="text-lg font-semibold text-gray-900 mb-2">
+                                  Learning Objectives
                                 </h2>
-                                <div className="space-y-3 text-gray-700">
-                                  {/* Patient Profile */}
-                                  {finalCaseSections["Patient Profile"] && (
-                                    <div>
-                                      <h3 className="font-semibold text-gray-900 mb-1">
-                                        Patient Profile:
-                                      </h3>
-                                      <p className="whitespace-pre-line">
-                                        {finalCaseSections["Patient Profile"]}
-                                      </p>
-                                    </div>
-                                  )}
+                                <ul className="list-disc list-inside space-y-1 text-gray-700">
+                                  {finalCaseSections["Learning Objectives"]
+                                    .split("\n• ")
+                                    .map((obj, idx) => (
+                                      <li key={idx}>{obj}</li>
+                                    ))}
+                                </ul>
+                              </div>
+                            )}
 
-                                  {/* History of Present Illness */}
+                            {finalCaseSections["Core Pathophysiology"] && (
+                              <div>
+                                <h2 className="text-lg font-semibold text-gray-900 mb-2">
+                                  Core Pathophysiology
+                                </h2>
+                                <p className="text-gray-700 whitespace-pre-line">
+                                  {finalCaseSections["Core Pathophysiology"]}
+                                </p>
+                              </div>
+                            )}
+
+                            {finalCaseSections["Clinical Reasoning Steps"] && (
+                              <div>
+                                <h2 className="text-lg font-semibold text-gray-900 mb-2">
+                                  Clinical Reasoning Steps
+                                </h2>
+                                <ol className="list-decimal list-inside space-y-2 text-gray-700">
+                                  {finalCaseSections["Clinical Reasoning Steps"]
+                                    .split("\n")
+                                    .filter((s) => s.trim())
+                                    .map((step, idx) => (
+                                      <li
+                                        key={idx}
+                                        className="whitespace-pre-line"
+                                      >
+                                        {step}
+                                      </li>
+                                    ))}
+                                </ol>
+                              </div>
+                            )}
+
+                            {finalCaseSections["Red Flags and Pitfalls"] && (
+                              <div>
+                                <h2 className="text-lg font-semibold text-gray-900 mb-2">
+                                  Red Flags and Pitfalls
+                                </h2>
+                                <ul className="list-disc list-inside space-y-1 text-gray-700">
+                                  {finalCaseSections["Red Flags and Pitfalls"]
+                                    .split("\n• ")
+                                    .map((pitfall, idx) => (
+                                      <li key={idx}>{pitfall}</li>
+                                    ))}
+                                </ul>
+                              </div>
+                            )}
+
+                            {finalCaseSections[
+                              "Differential Diagnosis Framework"
+                            ] && (
+                              <div>
+                                <h2 className="text-lg font-semibold text-gray-900 mb-2">
+                                  Differential Diagnosis Framework
+                                </h2>
+                                <ul className="list-disc list-inside space-y-2 text-gray-700">
                                   {finalCaseSections[
-                                    "History of Present Illness"
-                                  ] && (
-                                    <div>
-                                      <h3 className="font-semibold text-gray-900 mb-1">
-                                        History of Present Illness:
-                                      </h3>
-                                      <p className="whitespace-pre-line">
-                                        {
-                                          finalCaseSections[
-                                            "History of Present Illness"
-                                          ]
-                                        }
-                                      </p>
-                                    </div>
-                                  )}
+                                    "Differential Diagnosis Framework"
+                                  ]
+                                    .split("\n")
+                                    .filter((s) => s.trim())
+                                    .map((dx, idx) => (
+                                      <li
+                                        key={idx}
+                                        className="whitespace-pre-line"
+                                      >
+                                        {dx}
+                                      </li>
+                                    ))}
+                                </ul>
+                              </div>
+                            )}
 
-                                  {/* Past Medical History */}
+                            {finalCaseSections[
+                              "Important Labs/Imaging to Know"
+                            ] && (
+                              <div>
+                                <h2 className="text-lg font-semibold text-gray-900 mb-2">
+                                  Important Labs/Imaging to Know
+                                </h2>
+                                <ul className="list-disc list-inside space-y-1 text-gray-700">
                                   {finalCaseSections[
-                                    "Past Medical History"
-                                  ] && (
-                                    <div>
-                                      <h3 className="font-semibold text-gray-900 mb-1">
-                                        Past Medical History:
-                                      </h3>
-                                      <p className="whitespace-pre-line">
-                                        {
-                                          finalCaseSections[
-                                            "Past Medical History"
-                                          ]
-                                        }
-                                      </p>
-                                    </div>
-                                  )}
+                                    "Important Labs/Imaging to Know"
+                                  ]
+                                    .split("\n• ")
+                                    .map((lab, idx) => (
+                                      <li key={idx}>{lab}</li>
+                                    ))}
+                                </ul>
+                              </div>
+                            )}
 
-                                  {/* Medications */}
-                                  {finalCaseSections["Medications"] && (
-                                    <div>
-                                      <h3 className="font-semibold text-gray-900 mb-1">
-                                        Medications:
-                                      </h3>
-                                      <p className="whitespace-pre-line">
-                                        {finalCaseSections["Medications"]}
-                                      </p>
-                                    </div>
-                                  )}
+                            {finalCaseSections["Why This Case Matters"] && (
+                              <div>
+                                <h2 className="text-lg font-semibold text-gray-900 mb-2">
+                                  Why This Case Matters
+                                </h2>
+                                <p className="text-gray-700 whitespace-pre-line">
+                                  {finalCaseSections["Why This Case Matters"]}
+                                </p>
+                              </div>
+                            )}
 
-                                  {/* Examination */}
-                                  {finalCaseSections["Examination"] && (
-                                    <div>
-                                      <h3 className="font-semibold text-gray-900 mb-1">
-                                        Examination:
-                                      </h3>
-                                      <p className="whitespace-pre-line">
-                                        {finalCaseSections["Examination"]}
-                                      </p>
-                                    </div>
-                                  )}
-
-                                  {/* If Case Presentation exists but no subsections, show it */}
-                                  {finalCaseSections["Case Presentation"] &&
-                                    !finalCaseSections["Patient Profile"] && (
-                                      <p className="whitespace-pre-line">
-                                        {finalCaseSections["Case Presentation"]}
-                                      </p>
-                                    )}
+                            {/* Old Format Sections - Only show if new format not present */}
+                            {!hasNewFormat &&
+                              finalCaseSections["Objective"] && (
+                                <div>
+                                  <h2 className="text-lg font-semibold text-gray-900 mb-2">
+                                    Objective
+                                  </h2>
+                                  <p className="text-gray-700 whitespace-pre-line">
+                                    {finalCaseSections["Objective"]}
+                                  </p>
                                 </div>
-                              </div>
-                            )}
+                              )}
 
-                            {/* Initial Investigations - Always show */}
-                            {finalCaseSections["Initial Investigations"] && (
-                              <div>
-                                <h2 className="text-lg font-semibold text-gray-900 mb-2">
-                                  Initial Investigations
-                                </h2>
-                                <p className="text-gray-700 whitespace-pre-line">
-                                  {finalCaseSections["Initial Investigations"]}
-                                </p>
-                              </div>
-                            )}
+                            {/* Old Format: Case Presentation - Only show if new format not present */}
+                            {!hasNewFormat &&
+                              (finalCaseSections["Case Presentation"] ||
+                                finalCaseSections["Patient Profile"] ||
+                                finalCaseSections[
+                                  "History of Present Illness"
+                                ]) && (
+                                <div>
+                                  <h2 className="text-lg font-semibold text-gray-900 mb-3">
+                                    Case Presentation
+                                  </h2>
+                                  <div className="space-y-3 text-gray-700">
+                                    {/* Patient Profile */}
+                                    {finalCaseSections["Patient Profile"] && (
+                                      <div>
+                                        <h3 className="font-semibold text-gray-900 mb-1">
+                                          Patient Profile:
+                                        </h3>
+                                        <p className="whitespace-pre-line">
+                                          {finalCaseSections["Patient Profile"]}
+                                        </p>
+                                      </div>
+                                    )}
 
-                            {/* Case Progression/Intervention - Always show */}
-                            {(finalCaseSections[
-                              "Case Progression/Intervention"
-                            ] ||
-                              finalCaseSections["Case Progression"]) && (
-                              <div>
-                                <h2 className="text-lg font-semibold text-gray-900 mb-2">
-                                  Case Progression/Intervention
-                                </h2>
-                                <p className="text-gray-700 whitespace-pre-line">
-                                  {finalCaseSections[
-                                    "Case Progression/Intervention"
-                                  ] || finalCaseSections["Case Progression"]}
-                                </p>
-                              </div>
-                            )}
+                                    {/* History of Present Illness */}
+                                    {finalCaseSections[
+                                      "History of Present Illness"
+                                    ] && (
+                                      <div>
+                                        <h3 className="font-semibold text-gray-900 mb-1">
+                                          History of Present Illness:
+                                        </h3>
+                                        <p className="whitespace-pre-line">
+                                          {
+                                            finalCaseSections[
+                                              "History of Present Illness"
+                                            ]
+                                          }
+                                        </p>
+                                      </div>
+                                    )}
 
-                            {/* Final Diagnosis/Learning Anchor - Always show */}
-                            {(finalCaseSections[
-                              "Final Diagnosis/Learning Anchor"
-                            ] ||
-                              finalCaseSections["Final Diagnosis"]) && (
-                              <div>
-                                <h2 className="text-lg font-semibold text-gray-900 mb-2">
-                                  Final Diagnosis/Learning Anchor
-                                </h2>
-                                <p className="text-gray-700 whitespace-pre-line">
-                                  {finalCaseSections[
-                                    "Final Diagnosis/Learning Anchor"
-                                  ] || finalCaseSections["Final Diagnosis"]}
-                                </p>
-                              </div>
-                            )}
+                                    {/* Past Medical History */}
+                                    {finalCaseSections[
+                                      "Past Medical History"
+                                    ] && (
+                                      <div>
+                                        <h3 className="font-semibold text-gray-900 mb-1">
+                                          Past Medical History:
+                                        </h3>
+                                        <p className="whitespace-pre-line">
+                                          {
+                                            finalCaseSections[
+                                              "Past Medical History"
+                                            ]
+                                          }
+                                        </p>
+                                      </div>
+                                    )}
+
+                                    {/* Medications */}
+                                    {finalCaseSections["Medications"] && (
+                                      <div>
+                                        <h3 className="font-semibold text-gray-900 mb-1">
+                                          Medications:
+                                        </h3>
+                                        <p className="whitespace-pre-line">
+                                          {finalCaseSections["Medications"]}
+                                        </p>
+                                      </div>
+                                    )}
+
+                                    {/* Examination */}
+                                    {finalCaseSections["Examination"] && (
+                                      <div>
+                                        <h3 className="font-semibold text-gray-900 mb-1">
+                                          Examination:
+                                        </h3>
+                                        <p className="whitespace-pre-line">
+                                          {finalCaseSections["Examination"]}
+                                        </p>
+                                      </div>
+                                    )}
+
+                                    {/* If Case Presentation exists but no subsections, show it */}
+                                    {finalCaseSections["Case Presentation"] &&
+                                      !finalCaseSections["Patient Profile"] && (
+                                        <p className="whitespace-pre-line">
+                                          {
+                                            finalCaseSections[
+                                              "Case Presentation"
+                                            ]
+                                          }
+                                        </p>
+                                      )}
+                                  </div>
+                                </div>
+                              )}
+
+                            {/* Old Format: Initial Investigations - Only show if new format not present */}
+                            {!hasNewFormat &&
+                              finalCaseSections["Initial Investigations"] && (
+                                <div>
+                                  <h2 className="text-lg font-semibold text-gray-900 mb-2">
+                                    Initial Investigations
+                                  </h2>
+                                  <p className="text-gray-700 whitespace-pre-line">
+                                    {
+                                      finalCaseSections[
+                                        "Initial Investigations"
+                                      ]
+                                    }
+                                  </p>
+                                </div>
+                              )}
+
+                            {/* Old Format: Case Progression/Intervention - Only show if new format not present */}
+                            {!hasNewFormat &&
+                              (finalCaseSections[
+                                "Case Progression/Intervention"
+                              ] ||
+                                finalCaseSections["Case Progression"]) && (
+                                <div>
+                                  <h2 className="text-lg font-semibold text-gray-900 mb-2">
+                                    Case Progression/Intervention
+                                  </h2>
+                                  <p className="text-gray-700 whitespace-pre-line">
+                                    {finalCaseSections[
+                                      "Case Progression/Intervention"
+                                    ] || finalCaseSections["Case Progression"]}
+                                  </p>
+                                </div>
+                              )}
+
+                            {/* Old Format: Final Diagnosis/Learning Anchor - Only show if new format not present */}
+                            {!hasNewFormat &&
+                              (finalCaseSections[
+                                "Final Diagnosis/Learning Anchor"
+                              ] ||
+                                finalCaseSections["Final Diagnosis"]) && (
+                                <div>
+                                  <h2 className="text-lg font-semibold text-gray-900 mb-2">
+                                    Final Diagnosis/Learning Anchor
+                                  </h2>
+                                  <p className="text-gray-700 whitespace-pre-line">
+                                    {finalCaseSections[
+                                      "Final Diagnosis/Learning Anchor"
+                                    ] || finalCaseSections["Final Diagnosis"]}
+                                  </p>
+                                </div>
+                              )}
                           </>
                         ) : (
                           /* If parsing failed, show raw description */
