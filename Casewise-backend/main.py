@@ -2620,7 +2620,11 @@ async def generate_case_scenarios(
     if not OPENAI_API_KEY:
         raise HTTPException(status_code=500, detail="OpenAI API key not configured")
     
-    # Find the document
+    # ---- Tiny difficulty config block (central place to tweak later) ----
+    # Product spec: Easy / Moderate / Hard
+    DIFFICULTY_SEQUENCE = ["Easy", "Moderate", "Hard"]
+    
+    # 1) Find the document
     try:
         document = db.documents.find_one({
             "_id": ObjectId(request.document_id),
@@ -2637,7 +2641,7 @@ async def generate_case_scenarios(
         raise HTTPException(status_code=400, detail="Document does not contain readable text content")
     
     try:
-        # Use OpenAI GPT-4 mini
+        # 2) Use OpenAI GPT-4 mini
         if not openai_client:
             raise Exception("OpenAI client not initialized")
         
@@ -2672,7 +2676,7 @@ async def generate_case_scenarios(
            - Differential diagnosis
            - Treatment options
            - Clinical pearls
-        4. Appropriate difficulty level (Beginner, Intermediate, Advanced)
+        4. Appropriate difficulty level (Easy, Moderate, or Hard)
 
         Format your response as a JSON array with the following structure:
         [
@@ -2689,28 +2693,85 @@ async def generate_case_scenarios(
         response = openai_client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
-                {"role": "system", "content": "You are an expert medical case scenario generator. Always respond with valid JSON format."},
+                {
+                    "role": "system",
+                    "content": "You are an expert medical case scenario generator. Always respond with valid JSON format."
+                },
                 {"role": "user", "content": system_prompt}
             ],
             temperature=0.7,
             max_tokens=4000
         )
         
-        # Parse the response (assuming it returns JSON)
         import json
+        
+        raw_content = response.choices[0].message.content or ""
+        
+        # 3) Small robustness: strip markdown fences if model wraps output
+        text = raw_content.strip()
+        if text.startswith("```"):
+            # remove leading ``` or ```json
+            text = text.strip("`")
+            if text.lower().startswith("json"):
+                text = text[4:].strip()
+        
         try:
-            scenarios_data = json.loads(response.choices[0].message.content)
+            scenarios_data = json.loads(text)
         except json.JSONDecodeError:
             # If JSON parsing fails, create a fallback response
             scenarios_data = [{
                 "title": f"Generated Case {i+1}",
                 "description": f"Case scenario based on: {request.prompt}",
-                "key_points": ["Key learning point 1", "Key learning point 2", "Key learning point 3"],
+                "key_points": [
+                    "Key learning point 1",
+                    "Key learning point 2",
+                    "Key learning point 3"
+                ],
                 "difficulty": "Moderate"
             } for i in range(request.num_scenarios)]
         
-        # Convert to CaseScenario objects
-        scenarios = [CaseScenario(**scenario) for scenario in scenarios_data[:request.num_scenarios]]
+        # 4) Normalize + enforce difficulty + safety defaults
+        num_scenarios = min(len(scenarios_data), request.num_scenarios)
+        normalized_scenarios = []
+        for i in range(num_scenarios):
+            raw = scenarios_data[i] or {}
+            scenario = dict(raw)  # shallow copy
+            
+            # Force difficulty from our sequence instead of trusting the model
+            forced_diff = DIFFICULTY_SEQUENCE[i % len(DIFFICULTY_SEQUENCE)]
+            scenario["difficulty"] = forced_diff
+            
+            # Basic safety defaults so your Pydantic model doesn't explode
+            if not scenario.get("title"):
+                scenario["title"] = f"Generated Case {i+1}"
+            if not scenario.get("description"):
+                scenario["description"] = f"Case scenario based on: {request.prompt}"
+            if not isinstance(scenario.get("key_points"), list) or not scenario["key_points"]:
+                scenario["key_points"] = ["Key learning point derived from this case."]
+            
+            normalized_scenarios.append(scenario)
+        
+        # 5) Persist generated cases so Key Concepts / Explore Case can find them
+        try:
+            for scen in normalized_scenarios:
+                db.generated_cases.insert_one(
+                    {
+                        "document_id": str(document["_id"]),   # IMPORTANT: store as string
+                        "title": scen["title"],
+                        "description": scen["description"],
+                        "key_points": scen.get("key_points", []),
+                        "difficulty": scen.get("difficulty", "Moderate"),
+                        # You can add more here later if needed (e.g., age, gender)
+                        "created_by": current_user["id"],
+                        "created_at": datetime.utcnow(),
+                    }
+                )
+        except Exception as e:
+            # Non‑fatal: log but don't break the endpoint
+            print(f"⚠️ Warning: failed to persist generated_cases: {e}")
+        
+        # 6) Convert to CaseScenario objects for the response
+        scenarios = [CaseScenario(**scenario) for scenario in normalized_scenarios]
         
         return CaseGenerationResponse(
             document_id=request.document_id,
