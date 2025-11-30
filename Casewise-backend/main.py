@@ -5200,7 +5200,7 @@ Instructions:
         {"_id": ObjectId(chat_id)},
         {
             "$inc": {"message_count": 1},
-            "$set": {"updated_at": datetime.utcnow()}
+            "$set": {"updated_at": datetime.now()}
         }
     )
     
@@ -5245,7 +5245,7 @@ async def update_chat_document(
             "document_filename": document_filename,
             "document_content_preview": document.get("content", "")[:200] + "..." if len(document.get("content", "")) > 200 else document.get("content", ""),
             "name": chat_name,  # Update chat name to match document filename
-            "updated_at": datetime.utcnow()
+            "updated_at": datetime.now()
         }
         
         result = db.chats.update_one(
@@ -5329,7 +5329,7 @@ async def save_generated_content(
                     "description": case["description"],
                     "key_points": case["key_points"],
                     "difficulty": case["difficulty"],
-                    "created_at": datetime.utcnow()
+                    "created_at": datetime.now()
                 }
                 db.generated_cases.insert_one(case_doc)
         
@@ -5344,7 +5344,7 @@ async def save_generated_content(
                     "options": mcq["options"],
                     "explanation": mcq["explanation"],
                     "difficulty": mcq["difficulty"],
-                    "created_at": datetime.utcnow()
+                    "created_at": datetime.now()
                 }
                 db.generated_mcqs.insert_one(mcq_doc)
         
@@ -5388,7 +5388,7 @@ async def save_generated_content(
                     "differential_diagnosis_framework": concept.get("differential_diagnosis_framework"),
                     "important_labs_imaging_to_know": concept.get("important_labs_imaging_to_know"),
                     "why_this_case_matters": concept.get("why_this_case_matters"),
-                    "created_at": datetime.utcnow()
+                    "created_at": datetime.now()
                 }
                 db.generated_concepts.insert_one(concept_doc)
             print(f"✅ Saved {len(content['concepts'])} concepts for case_title: '{case_title}'")
@@ -5514,8 +5514,8 @@ async def get_or_create_context_chat(
             "document_filename": document_filename,
             "document_content_preview": document_content_preview,
             "message_count": 0,
-            "created_at": datetime.utcnow(),
-            "updated_at": datetime.utcnow(),
+            "created_at": datetime.now(),
+            "updated_at": datetime.now(),
             "case_title": request.case_title,
             "concept_title": request.concept_title,
             "parent_chat_id": request.parent_chat_id
