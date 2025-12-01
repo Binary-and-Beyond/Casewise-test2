@@ -2691,7 +2691,7 @@ async def generate_case_scenarios(
         
         # Generate response from OpenAI
         response = openai_client.chat.completions.create(
-            model="gpt-4o-mini",
+            model="gpt-4.1",
             messages=[
                 {
                     "role": "system",
@@ -2884,7 +2884,7 @@ async def generate_case_titles(
             system_message += " CRITICAL: When generating 5 cases, you MUST create exactly 3 Moderate cases (first, second, and third), and 2 Hard cases (fourth and fifth) in this EXACT order. The case descriptions must match their difficulty levels and be directly relevant to the document content."
         
         response = openai_client.chat.completions.create(
-            model="gpt-4o-mini",
+            model="gpt-4.1",
             messages=[
                 {"role": "system", "content": system_message},
                 {"role": "user", "content": system_prompt}
@@ -3113,7 +3113,7 @@ Return JSON array only with ALL questions having difficulty: "{request.difficult
         # Generate response from OpenAI with optimized settings
         try:
             response = openai_client.chat.completions.create(
-                model="gpt-4o-mini",
+                model="gpt-4.1",
                 messages=[
                     {"role": "system", "content": f"You are a medical educator. Generate single-best-answer MCQs with exactly 5 options (A-E) as case-based scenario questions. Test high-yield essential clinical concepts with plausible distractors. Include mandatory answer rationale. ALL questions must have EXACTLY the same difficulty: {request.difficulty or 'Moderate'}. Always respond with valid JSON format."},
                     {"role": "user", "content": system_prompt}
@@ -3126,7 +3126,7 @@ Return JSON array only with ALL questions having difficulty: "{request.difficult
             print(f"OpenAI API error: {e}")
             # Fallback: try with even more optimized settings
             response = openai_client.chat.completions.create(
-                model="gpt-4o-mini",
+                model="gpt-4.1",
                 messages=[
                     {"role": "system", "content": f"Generate single-best-answer medical MCQs with 5 options (A-E) in JSON format. ALL questions must have difficulty: {request.difficulty or 'Moderate'}. Questions must be case-based scenarios testing high-yield clinical concepts with plausible distractors."},
                     {"role": "user", "content": f"Create {request.num_questions} case-based medical MCQs with 5 options each from: {document_context[:800]}. ALL questions must be {request.difficulty or 'Moderate'} difficulty. Each question must reference patient data and test essential clinical knowledge with plausible distractors."}
@@ -3490,7 +3490,7 @@ RULES:
                 # Generate response from OpenAI
                 print(f"🔄 Attempt {retry_count + 1} of {max_retries + 1} to generate concepts...")
                 response = openai_client.chat.completions.create(
-                    model="gpt-4o-mini",
+                    model="gpt-4.1",
                     messages=[
                         {"role": "system", "content": "Medical educator. Generate key concepts for a medical case with clear sections. Return valid JSON only."},
                         {"role": "user", "content": system_prompt}
@@ -4022,7 +4022,7 @@ CRITICAL FOR 5 CASES:
                     system_message += " CRITICAL: When generating 5 cases, you MUST create exactly 1 Easy case, 2 Moderate cases, and 2 Hard cases. The case descriptions must match their difficulty levels."
                 
                 cases_response = openai_client.chat.completions.create(
-                    model="gpt-4o-mini",
+                    model="gpt-4.1",
                     messages=[
                         {"role": "system", "content": system_message},
                         {"role": "user", "content": cases_prompt}
@@ -4167,7 +4167,7 @@ Return JSON array:
 Generate exactly {request.num_mcqs} questions."""
                 
                 mcq_response = openai_client.chat.completions.create(
-                    model="gpt-4o-mini",
+                    model="gpt-4.1",
                     messages=[
                         {"role": "system", "content": "You are an expert medical educator creating MCQ questions. Always respond with valid JSON format."},
                         {"role": "user", "content": mcq_prompt}
@@ -4310,7 +4310,7 @@ Return JSON array:
 Identify exactly {request.num_concepts} concepts that are directly relevant to the document content."""
                     
                     concepts_response = openai_client.chat.completions.create(
-                        model="gpt-4o-mini",
+                        model="gpt-4.1",
                         messages=[
                             {"role": "system", "content": "You are an expert medical educator identifying key concepts. Always respond with valid JSON array format. Concepts MUST be directly relevant to the document content provided. CRITICAL: Ensure 100% accuracy - all medical information must be factually correct and directly derived from the document. Do not generate generic or placeholder content."},
                             {"role": "user", "content": concepts_prompt}
@@ -4413,7 +4413,7 @@ Return JSON array only:
 ]"""
                 
                 titles_response = openai_client.chat.completions.create(
-                    model="gpt-4o-mini",
+                    model="gpt-4.1",
                     messages=[
                         {"role": "system", "content": "You are an expert medical case generator. Always respond with valid JSON format."},
                         {"role": "user", "content": titles_prompt}
@@ -4547,7 +4547,7 @@ Return JSON array only:
 ]"""
                 
                 mcq_response = openai_client.chat.completions.create(
-                    model="gpt-4o-mini",
+                    model="gpt-4.1",
                     messages=[
                         {"role": "system", "content": "You are an expert medical educator creating MCQ questions. Always respond with valid JSON format."},
                         {"role": "user", "content": mcq_prompt}
@@ -4868,7 +4868,7 @@ Instructions:
         print("AI: Generating response from OpenAI...")
         # Generate response from OpenAI
         response = openai_client.chat.completions.create(
-            model="gpt-4o-mini",
+            model="gpt-4.1",
             messages=[
                 {"role": "system", "content": system_role},
                 {"role": "user", "content": system_prompt}
@@ -5231,7 +5231,7 @@ Instructions:
         
         # Generate response from OpenAI
         response = openai_client.chat.completions.create(
-            model="gpt-4o-mini",
+            model="gpt-4.1",
             messages=[
                 {"role": "system", "content": system_role},
                 {"role": "user", "content": system_prompt}
@@ -5653,7 +5653,7 @@ Generate only the hint text, no additional formatting."""
 
         # Generate response from OpenAI
         response = openai_client.chat.completions.create(
-            model="gpt-4o-mini",
+            model="gpt-4.1",
             messages=[
                 {"role": "system", "content": "You are a medical educator. Provide helpful, educational hints."},
                 {"role": "user", "content": system_prompt}
