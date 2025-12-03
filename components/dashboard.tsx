@@ -2539,7 +2539,7 @@ export function Dashboard({}: DashboardProps) {
           setUploadError(
             "MCQ generation is taking longer than expected. Please try again."
           );
-        }, 120000); // 2 minutes safety timeout
+        }, 240000); // 4 minutes safety timeout (increased to match backend timeout + buffer)
       }
 
       // Get the difficulty of the selected case
@@ -2627,7 +2627,7 @@ export function Dashboard({}: DashboardProps) {
 
       if (isTimeout) {
         setUploadError(
-          "MCQ generation timed out (30s limit). The AI is processing complex medical content. Please try again."
+          "MCQ generation timed out. The AI is processing complex medical content. Please try again."
         );
       } else if (isNetworkError && retryCount < 2) {
         console.log(
@@ -2791,7 +2791,7 @@ export function Dashboard({}: DashboardProps) {
           setUploadError(
             "Concept generation is taking longer than expected. Please try again."
           );
-        }, 120000); // 2 minutes safety timeout
+        }, 240000); // 4 minutes safety timeout (increased to match backend timeout + buffer)
       }
 
       // Use the new concepts API endpoint

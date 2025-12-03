@@ -1273,7 +1273,7 @@ class ApiService {
           difficulty: difficulty,
         }),
       },
-      60000 // 1 minute timeout (increased from 30s)
+      180000 // 3 minutes timeout for MCQ generation (increased to handle complex content and higher token limits)
     );
     return this.handleResponse<MCQResponse>(response);
   }

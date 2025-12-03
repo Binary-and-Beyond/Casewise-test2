@@ -306,7 +306,7 @@ export function ChatbotFlow({ document, onBack }: ChatbotFlowProps) {
         console.warn("⚠️ MCQ generation timeout - clearing stuck state");
         setIsLoading(false);
         setError("MCQ generation is taking longer than expected. Please try again.");
-      }, 120000); // 2 minutes safety timeout
+      }, 240000); // 4 minutes safety timeout (increased to match backend timeout + buffer)
     }
     
     try {
@@ -403,7 +403,7 @@ export function ChatbotFlow({ document, onBack }: ChatbotFlowProps) {
         console.warn("⚠️ Concept identification timeout - clearing stuck state");
         setIsLoading(false);
         setError("Concept identification is taking longer than expected. Please try again.");
-      }, 120000); // 2 minutes safety timeout
+      }, 240000); // 4 minutes safety timeout (increased to match backend timeout + buffer)
     }
     
     try {

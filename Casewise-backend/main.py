@@ -2986,6 +2986,60 @@ async def generate_mcqs(
     
     document_context = ""
     
+    def clean_document_content(content):
+        """Remove metadata and non-medical content from document."""
+        if not content:
+            return ""
+        
+        lines = content.split('\n')
+        cleaned_lines = []
+        skip_section = False
+        
+        # Keywords that indicate metadata sections to skip
+        metadata_indicators = [
+            "author:", "authors:", "publication:", "published:", "journal:",
+            "copyright", "doi:", "isbn:", "issn:", "reference", "citation",
+            "bibliography", "acknowledgment", "affiliation", "institution:",
+            "university:", "department:", "page", "chapter", "section",
+            "abstract:", "keywords:", "corresponding author"
+        ]
+        
+        for line in lines:
+            line_lower = line.lower().strip()
+            
+            # Skip lines that are clearly metadata
+            if any(indicator in line_lower for indicator in metadata_indicators):
+                # Check if it's actually metadata (not a medical term)
+                if any(term in line_lower for term in ["author", "publication", "journal", "copyright", 
+                                                       "doi", "isbn", "issn", "reference", "citation",
+                                                       "bibliography", "acknowledgment", "affiliation"]):
+                    skip_section = True
+                    continue
+            
+            # Skip empty lines if we're in a metadata section
+            if skip_section and not line.strip():
+                continue
+            
+            # Reset skip flag if we hit a new substantial line (likely medical content)
+            if skip_section and len(line.strip()) > 20 and not any(indicator in line_lower for indicator in metadata_indicators):
+                skip_section = False
+            
+            if not skip_section:
+                cleaned_lines.append(line)
+        
+        cleaned = '\n'.join(cleaned_lines)
+        
+        # Remove common metadata patterns
+        import re
+        # Remove lines with email patterns
+        cleaned = re.sub(r'[\w\.-]+@[\w\.-]+\.\w+', '', cleaned)
+        # Remove lines with URL patterns
+        cleaned = re.sub(r'https?://\S+', '', cleaned)
+        # Remove lines that are just numbers (likely page numbers)
+        cleaned = re.sub(r'^\s*\d+\s*$', '', cleaned, flags=re.MULTILINE)
+        
+        return cleaned.strip()
+    
     # Get document context if document_id is provided
     if request.document_id:
         try:
@@ -2994,11 +3048,20 @@ async def generate_mcqs(
                 "uploaded_by": current_user["id"]
             })
             if document and document.get("content"):
-                document_context = document['content'][:500]  # Further reduced for faster processing
-        except Exception:
+                raw_content = document['content']
+                # Clean metadata before using
+                cleaned_content = clean_document_content(raw_content)
+                # If cleaning removed too much, use original but with warning
+                if len(cleaned_content.strip()) < 100 and len(raw_content) > 500:
+                    print(f"WARNING: Document cleaning removed too much content. Using original with metadata warning.")
+                    document_context = raw_content[:800]
+                else:
+                    document_context = cleaned_content[:800]  # Increased after cleaning
+        except Exception as e:
+            print(f"ERROR: Failed to fetch/clean document: {e}")
             pass
     
-    if not document_context:
+    if not document_context or len(document_context.strip()) < 50:
         raise HTTPException(status_code=400, detail="No document content available for MCQ generation")
     
     # Fetch case details if case_title is provided
@@ -3055,7 +3118,7 @@ async def generate_mcqs(
             else:
                 gender_normalized = gender
             
-            case_demographics = f"\n\nCRITICAL PATIENT DEMOGRAPHICS CONSISTENCY REQUIREMENT:\n- The patient in this case is a {age}-year-old {gender_normalized}\n- ALL MCQ questions MUST reference this EXACT patient (e.g., 'A {age}-year-old {gender_normalized} presents with...')\n- DO NOT change the age or gender in questions - maintain strict consistency\n- If the case title mentions '{age}-year-old {gender_normalized}', all questions must reference this same patient"
+            case_demographics = f"\n\nCRITICAL PATIENT DEMOGRAPHICS CONSISTENCY REQUIREMENT:\n- The patient in this case is a {age}-year-old {gender_normalized}\n- MCQ questions should be consistent with this case, but AVOID repeating the same demographics in every question\n- Vary the phrasing: Use 'this patient', 'the patient', 'the same patient', or reference clinical findings instead of repeating age/gender in every question\n- Only include demographics when clinically relevant to the specific question being asked\n- Focus on clinical scenarios, findings, or management rather than repeating demographics unnecessarily"
         elif case_description:
             # If we can't extract specific demographics, use the full case description
             case_demographics = f"\n\nCRITICAL CASE CONTEXT:\n- Full Case Description: {case_description[:500]}\n- ALL MCQ questions MUST be consistent with this specific case scenario\n- Maintain consistency with patient demographics, presentation, and clinical details from the case description above"
@@ -3083,15 +3146,73 @@ async def generate_mcqs(
         
         system_prompt = f"""TASK: GENERATE A SINGLE-BEST-ANSWER MULTIPLE-CHOICE QUESTION (MCQ) WITH RATIONALE
 
-Based on the preceding medical case information, generate {request.num_questions} multiple-choice question(s) designed to test a high-yield, essential clinical concept critical to the diagnosis or immediate management of the patient in the case.
+Based on the preceding medical case information, generate {request.num_questions} multiple-choice question(s) designed to test high-yield, essential clinical concepts related to this case.
+
+CRITICAL DIVERSITY REQUIREMENT - VARY QUESTION TYPES AND FOCUS:
+When generating {request.num_questions} questions, you MUST create VARIED question types with DIFFERENT focuses. Do NOT make all questions about the same patient or patient-specific scenarios. Instead, create a diverse mix:
+
+1. **Patient-Specific Questions** (use sparingly, max 1-2 out of {request.num_questions}):
+   - Can reference "this patient" or "the patient" without repeating demographics
+   - Focus on specific clinical findings, lab results, or management decisions
+
+2. **Case-Based Scenario Questions** (preferred):
+   - "In this case scenario, what is the most likely mechanism..."
+   - "Based on the clinical presentation described, which of the following..."
+   - "Given the findings in this case, what would be the next best step..."
+
+3. **General Concept Questions** (highly encouraged):
+   - "What is the mechanism of action of [medication mentioned in case]?"
+   - "Which of the following is a key pathophysiological feature of [condition in case]?"
+   - "What is the most important diagnostic test for [condition related to case]?"
+   - "Which medication class is first-line for [condition in case]?"
+
+4. **Situational/Clinical Reasoning Questions**:
+   - "A patient presents with [symptoms from case]. What is the most likely diagnosis?"
+   - "In a patient with [condition from case], which finding would be most concerning?"
+   - "What is the most appropriate management strategy for [situation from case]?"
+
+5. **Mechanism/Pathophysiology Questions**:
+   - "What is the underlying pathophysiological mechanism of [condition in case]?"
+   - "How does [medication from case] exert its therapeutic effect?"
+   - "Which molecular pathway is primarily involved in [disease from case]?"
+
+6. **Diagnostic/Management Questions**:
+   - "What is the most appropriate initial investigation for [condition from case]?"
+   - "Which of the following is a contraindication to [treatment from case]?"
+   - "What is the most important monitoring parameter for [medication from case]?"
 
 MCQ Structure and Constraints:
 
-Question Stem: The question must be presented as a **Case-Based Scenario Question**. Reference the patient's data, such as a lab result, physical exam finding, or the final diagnosis, and then ask a clear, specific question about a core concept (e.g., "What is the most likely long-term complication in this patient?", or "What is the mechanism of action of the first-line medication in this scenario?"). CRITICAL: If a specific case was selected with patient demographics (age and gender), the question MUST reference the EXACT same patient demographics (e.g., if the case is about an 8-year-old girl, the question must say "An 8-year-old girl..." NOT "A 12-year-old male..." or any other age/gender combination). 
+Question Stem: Vary your question stems. Do NOT start every question with patient demographics. Use diverse approaches:
+- "What is the mechanism of..."
+- "Which of the following is the most likely..."
+- "In patients with [condition], what is..."
+- "What is the most appropriate..."
+- "Which diagnostic test is most useful for..."
+- "What is the pathophysiological basis of..." 
 
 Options: Provide exactly five (5) answer options (A, B, C, D, E). Only one option must be unequivocally correct. 
 
-Content Focus (Essential Knowledge): MUST test essential, high-yield clinical knowledge (e.g., differential diagnosis, next best step in management, critical pathophysiology, or drug mechanism). MAY test the name of a discoverer or a named disease/syndrome (e.g., Hashimoto's disease, Cushing's triad). MUST NOT test 'good-to-know' or trivial information. STRICTLY AVOID testing non-essential reference details, such as the author's name, publication year, or obscure section names, even if they are present in the source material.
+Content Focus (Essential Knowledge): MUST test essential, high-yield clinical knowledge (e.g., differential diagnosis, next best step in management, critical pathophysiology, or drug mechanism). MAY test the name of a discoverer or a named disease/syndrome (e.g., Hashimoto's disease, Cushing's triad). MUST NOT test 'good-to-know' or trivial information.
+
+CRITICAL CONTENT RESTRICTION - STRICTLY PROHIBITED:
+You MUST NEVER create questions about document metadata, bibliographic information, or non-medical content. This includes but is not limited to:
+- Author names, researcher names, or institutional affiliations
+- Publication dates, years, or journal names
+- Document titles, section headers, or chapter numbers (unless they are medical terms)
+- File names, document IDs, or reference numbers
+- Publisher information, copyright notices, or citation details
+- Page numbers, line numbers, or formatting details
+- Any administrative or bibliographic metadata
+
+ALL questions MUST focus exclusively on:
+- Medical concepts, pathophysiology, diagnosis, and treatment
+- Clinical reasoning and decision-making
+- Disease mechanisms, drug actions, and therapeutic principles
+- Patient presentation, examination findings, and investigations
+- Evidence-based medicine and clinical guidelines
+
+If the source document contains metadata or non-medical information, IGNORE IT COMPLETELY. Only use the actual medical/clinical content for question generation.
 
 Distractors (Incorrect Options): The four incorrect options (distractors) must be **plausible**. They should represent common misconceptions, less likely differential diagnoses, or inappropriate next steps in management to effectively test the student's clinical reasoning and differentiation skills. 
 
@@ -3101,12 +3222,52 @@ Explanation: Immediately after the correct answer identifier, provide a concise 
 
 a. Justify the Correct Answer: State clearly *why* the chosen option is correct. 
 
-Content: {document_context[:500]}{case_context}
+MEDICAL CONTENT (metadata removed - use only medical/clinical information):
+{document_context}{case_context}
+
+REMINDER: The content above has been cleaned of metadata. If you see any author names, publication dates, journal names, or bibliographic information, IGNORE IT. Only use medical concepts, pathophysiology, diagnosis, treatment, and clinical information.
 
 CRITICAL: ALL questions must have EXACTLY the same difficulty level: "{request.difficulty or 'Moderate'}"
 
-Example of correct format (ALL questions must follow this pattern):
-[{{"id": "mcq_1", "question": "A 52-year-old patient presents with [case-specific detail]. What is the most likely mechanism underlying this condition?", "options": [{{"id": "A", "text": "Option A (plausible distractor)", "is_correct": false}}, {{"id": "B", "text": "Correct answer", "is_correct": true}}, {{"id": "C", "text": "Option C (plausible distractor)", "is_correct": false}}, {{"id": "D", "text": "Option D (plausible distractor)", "is_correct": false}}, {{"id": "E", "text": "Option E (plausible distractor)", "is_correct": false}}], "explanation": "The correct answer is B because [clear justification of why this option is correct, referencing the case scenario and essential clinical knowledge].", "difficulty": "{request.difficulty or 'Moderate'}"}}]
+CRITICAL JSON FORMAT REQUIREMENT:
+You MUST return a valid JSON array. Each question MUST have this EXACT structure:
+
+[
+  {{
+    "id": "mcq_1",
+    "question": "What is the mechanism of action of metformin in improving glycemic control?",
+    "options": [
+      {{"id": "A", "text": "Option A text here", "is_correct": false}},
+      {{"id": "B", "text": "Option B text here (correct answer)", "is_correct": true}},
+      {{"id": "C", "text": "Option C text here", "is_correct": false}},
+      {{"id": "D", "text": "Option D text here", "is_correct": false}},
+      {{"id": "E", "text": "Option E text here", "is_correct": false}}
+    ],
+    "explanation": "The correct answer is B because [detailed explanation]",
+    "difficulty": "{request.difficulty or 'Moderate'}"
+  }},
+  {{
+    "id": "mcq_2",
+    "question": "In patients with type 2 diabetes and asthma, which of the following is the most important consideration?",
+    "options": [
+      {{"id": "A", "text": "Option A", "is_correct": false}},
+      {{"id": "B", "text": "Option B", "is_correct": false}},
+      {{"id": "C", "text": "Option C (correct)", "is_correct": true}},
+      {{"id": "D", "text": "Option D", "is_correct": false}},
+      {{"id": "E", "text": "Option E", "is_correct": false}}
+    ],
+    "explanation": "The correct answer is C because [explanation]",
+    "difficulty": "{request.difficulty or 'Moderate'}"
+  }}
+]
+
+CRITICAL REQUIREMENTS:
+- Return ONLY a valid JSON array (no markdown, no code fences, no extra text)
+- Each question MUST have exactly 5 options (A, B, C, D, E)
+- Each option MUST be a dictionary with "id" (string), "text" (string), and "is_correct" (boolean)
+- Exactly ONE option per question must have "is_correct": true
+- ALL questions must have difficulty: "{request.difficulty or 'Moderate'}"
+- Vary question types - do NOT make all questions about the same patient
 
 Return JSON array only with ALL questions having difficulty: "{request.difficulty or 'Moderate'}" """
         
@@ -3115,12 +3276,12 @@ Return JSON array only with ALL questions having difficulty: "{request.difficult
             response = openai_client.chat.completions.create(
                 model="gpt-4.1",
                 messages=[
-                    {"role": "system", "content": f"You are a medical educator. Generate single-best-answer MCQs with exactly 5 options (A-E) as case-based scenario questions. Test high-yield essential clinical concepts with plausible distractors. Include mandatory answer rationale. ALL questions must have EXACTLY the same difficulty: {request.difficulty or 'Moderate'}. Always respond with valid JSON format."},
+                    {"role": "system", "content": f"You are a medical educator. Generate single-best-answer MCQs with exactly 5 options (A-E). Test high-yield essential clinical concepts with plausible distractors. Include mandatory answer rationale. ALL questions must have EXACTLY the same difficulty: {request.difficulty or 'Moderate'}. Always respond with valid JSON format. CRITICAL DIVERSITY: When generating multiple questions, create VARIED question types - NOT all about the same patient. Mix patient-specific questions (max 1-2), case-based scenarios, general concept questions, mechanism/pathophysiology questions, diagnostic questions, and management questions. Do NOT repeat the same patient demographics or start every question with patient information. STRICTLY PROHIBITED: NEVER create questions about document metadata, author names, publication dates, journal names, file names, or any bibliographic/non-medical information. Only focus on medical concepts, pathophysiology, diagnosis, and treatment."},
                     {"role": "user", "content": system_prompt}
                 ],
                 temperature=0.3,  # Slightly higher for faster generation while maintaining quality
-                max_tokens=1500,  # Reduced for faster generation
-                timeout=90  # Reduced timeout for faster response
+                max_tokens=4000,  # Increased to ensure complete questions with full options are generated
+                timeout=120  # Increased timeout for better quality generation
             )
         except Exception as e:
             print(f"OpenAI API error: {e}")
@@ -3128,12 +3289,23 @@ Return JSON array only with ALL questions having difficulty: "{request.difficult
             response = openai_client.chat.completions.create(
                 model="gpt-4.1",
                 messages=[
-                    {"role": "system", "content": f"Generate single-best-answer medical MCQs with 5 options (A-E) in JSON format. ALL questions must have difficulty: {request.difficulty or 'Moderate'}. Questions must be case-based scenarios testing high-yield clinical concepts with plausible distractors."},
-                    {"role": "user", "content": f"Create {request.num_questions} case-based medical MCQs with 5 options each from: {document_context[:800]}. ALL questions must be {request.difficulty or 'Moderate'} difficulty. Each question must reference patient data and test essential clinical knowledge with plausible distractors."}
+                    {"role": "system", "content": f"Generate single-best-answer medical MCQs with 5 options (A-E) in JSON format. ALL questions must have difficulty: {request.difficulty or 'Moderate'}. Questions must test high-yield clinical concepts with plausible distractors. CRITICAL DIVERSITY: Create VARIED question types - NOT all about the same patient. Mix patient-specific, case-based, general concept, mechanism, diagnostic, and management questions. Do NOT repeat demographics or start every question with patient information. STRICTLY PROHIBITED: NEVER create questions about document metadata, author names, publication dates, journal names, file names, or any bibliographic/non-medical information. Only focus on medical concepts, pathophysiology, diagnosis, and treatment."},
+                    {"role": "user", "content": f"""Create {request.num_questions} case-based medical MCQs with 5 options each from the following MEDICAL CONTENT ONLY (ignore any metadata, author names, publication info, or bibliographic details):
+
+{document_context[:800]}
+
+CRITICAL REQUIREMENTS:
+- ALL questions must be {request.difficulty or 'Moderate'} difficulty
+- Each question must test essential clinical knowledge with plausible distractors
+- STRICTLY PROHIBITED: Do NOT create questions about author names, publication dates, journal names, document titles, file names, or any bibliographic metadata
+- ONLY focus on medical concepts, pathophysiology, diagnosis, treatment, and clinical reasoning
+- If you see any metadata in the content above, IGNORE IT COMPLETELY
+
+Return valid JSON array with exactly 5 options per question."""}
                 ],
                 temperature=0.3,  # Slightly higher for faster generation
-                max_tokens=1200,  # Reduced for faster fallback generation
-                timeout=60  # 1 minute timeout for fallback generation
+                max_tokens=3500,  # Increased for fallback generation
+                timeout=90  # Increased timeout for fallback generation
             )
         
         # Parse the response
@@ -3143,74 +3315,262 @@ Return JSON array only with ALL questions having difficulty: "{request.difficult
         try:
             # Try to extract JSON from the response if it's wrapped in markdown
             response_text = response.choices[0].message.content.strip()
+            
+            # Remove markdown code blocks
             if response_text.startswith('```json'):
                 response_text = response_text.replace('```json', '').replace('```', '').strip()
             elif response_text.startswith('```'):
                 response_text = response_text.replace('```', '').strip()
             
-            mcqs_data = json.loads(response_text)
+            # Try to find JSON array boundaries if there's extra text
+            start_idx = response_text.find('[')
+            end_idx = response_text.rfind(']') + 1
+            
+            if start_idx != -1 and end_idx > start_idx:
+                json_text = response_text[start_idx:end_idx]
+                mcqs_data = json.loads(json_text)
+            else:
+                # Try parsing the whole text
+                mcqs_data = json.loads(response_text)
+            
+            # Validate that we got actual questions, not placeholders
+            if not isinstance(mcqs_data, list) or len(mcqs_data) == 0:
+                raise ValueError("No valid questions in response")
+            
+            # Check for placeholder questions and validate structure
+            for i, mcq in enumerate(mcqs_data):
+                if not isinstance(mcq, dict):
+                    raise ValueError(f"Question {i+1} is not a dictionary: {type(mcq)}")
+                
+                if not mcq.get("question") or "Case-based question" in mcq.get("question", "") or "based on document content" in mcq.get("question", "").lower():
+                    raise ValueError("Placeholder questions detected in response")
+                
+                # Validate options structure
+                if "options" not in mcq:
+                    raise ValueError(f"Question {i+1} missing 'options' field")
+                
+                if not isinstance(mcq["options"], list):
+                    raise ValueError(f"Question {i+1} has invalid options type: {type(mcq['options'])}")
+                
+                if len(mcq["options"]) == 0:
+                    raise ValueError(f"Question {i+1} has no options")
+                
+                # Log first question structure for debugging
+                if i == 0:
+                    print(f"DEBUG: First question structure: id={mcq.get('id')}, question={mcq.get('question')[:50]}..., options_count={len(mcq.get('options', []))}")
+                    if mcq.get("options"):
+                        print(f"DEBUG: First option type: {type(mcq['options'][0])}")
+                        print(f"DEBUG: First option value: {mcq['options'][0]}")
+                        print(f"DEBUG: All options types: {[type(opt) for opt in mcq['options']]}")
+                        print(f"DEBUG: All options: {mcq['options']}")
+            
             print(f"SUCCESS: Successfully parsed MCQ JSON: {len(mcqs_data)} questions")
-        except json.JSONDecodeError as e:
-            print(f"ERROR: MCQ JSON parsing failed: {e}")
-            print(f"Response text: {response.choices[0].message.content[:500]}...")
-            # If JSON parsing fails, create a fallback response
-            mcqs_data = [{
-                "id": f"mcq_{i+1}",
-                "question": f"Case-based question {i+1} based on document content?",
-                "options": [
-                    {"id": "A", "text": "Option A (plausible distractor)", "is_correct": False},
-                    {"id": "B", "text": "Option B (correct answer)", "is_correct": True},
-                    {"id": "C", "text": "Option C (plausible distractor)", "is_correct": False},
-                    {"id": "D", "text": "Option D (plausible distractor)", "is_correct": False},
-                    {"id": "E", "text": "Option E (plausible distractor)", "is_correct": False}
-                ],
-                "explanation": "The correct answer is B because [justification referencing case scenario and essential clinical knowledge].",
-                "difficulty": request.difficulty or "Moderate"
-            } for i in range(request.num_questions)]
+        except (json.JSONDecodeError, ValueError) as e:
+            print(f"ERROR: MCQ JSON parsing/validation failed: {e}")
+            print(f"Response text: {response.choices[0].message.content[:1000]}...")
+            # Instead of creating placeholder questions, raise an error to trigger retry
+            raise HTTPException(
+                status_code=500, 
+                detail=f"Failed to generate valid MCQs. The AI response could not be parsed or contained placeholder content. Please try again. Error: {str(e)}"
+            )
+        
+        # Validate questions don't contain metadata/non-medical content
+        metadata_keywords = [
+            "author", "publication", "journal", "published", "copyright", 
+            "publisher", "doi", "isbn", "issn", "reference", "citation",
+            "bibliography", "abstract", "acknowledgment", "affiliation",
+            "institution", "university", "department", "page", "chapter",
+            "section header", "document id", "file name", "metadata"
+        ]
+        
+        def contains_metadata(text):
+            """Check if text contains metadata-related keywords in a medical context."""
+            if not text:
+                return False
+            text_lower = text.lower()
+            
+            # Context-aware detection - check for metadata patterns, not just keywords
+            # Patterns that indicate metadata (not medical terms)
+            metadata_patterns = [
+                r'\bauthor[s]?\s*[:=]\s*\w+',  # "Author: John Smith"
+                r'\bpublication\s*[:=]',        # "Publication:"
+                r'\bjournal\s*[:=]\s*\w+',     # "Journal: Nature"
+                r'\bpublished\s+in\s+\d{4}',   # "Published in 2024"
+                r'\bcopyright\s+\d{4}',        # "Copyright 2024"
+                r'\bdoi\s*[:=]\s*10\.',        # "DOI: 10.1234/..."
+                r'\bisbn\s*[:=]',              # "ISBN:"
+                r'\bissn\s*[:=]',              # "ISSN:"
+                r'\breference[s]?\s*[:=]\s*\d+', # "Reference: 1" or "References:"
+                r'\bcitation[s]?\s*[:=]',      # "Citation:"
+                r'\bbibliography\s*[:=]',      # "Bibliography:"
+                r'\backnowledgment[s]?\s*[:=]', # "Acknowledgment:"
+                r'\baffiliation[s]?\s*[:=]',   # "Affiliation:"
+                r'\binstitution\s*[:=]\s*\w+', # "Institution: Harvard"
+                r'\bpage\s+\d+\s+of\s+\d+',    # "Page 5 of 10"
+                r'\bchapter\s+\d+\s*[:=]',     # "Chapter 3:"
+                r'\bcorresponding\s+author',   # "Corresponding author"
+            ]
+            
+            import re
+            for pattern in metadata_patterns:
+                if re.search(pattern, text_lower):
+                    return True
+            
+            # Check for question/option that's clearly about metadata (not medical)
+            # Only flag if it's asking about metadata explicitly
+            if re.search(r'(what|which|who)\s+(is|was|are)\s+(the\s+)?(author|publication|journal|publisher)', text_lower):
+                return True
+            if re.search(r'(author|publication|journal|publisher)\s+(name|date|year|title)', text_lower):
+                return True
+            
+            return False
         
         # Convert to MCQQuestion objects
         questions = []
         for mcq_data in mcqs_data[:request.num_questions]:
-            options = [MCQOption(**option) for option in mcq_data["options"]]
-            
-            # BULLETPROOF: Completely ignore AI's difficulty and force case difficulty
-            if request.difficulty:
-                # Normalize difficulty to ensure proper capitalization (Easy, Moderate, Hard)
-                difficulty_lower = request.difficulty.lower().strip()
-                if difficulty_lower == "easy":
-                    question_difficulty = "Easy"
-                elif difficulty_lower == "moderate":
-                    question_difficulty = "Moderate"
-                elif difficulty_lower == "hard":
-                    question_difficulty = "Hard"
-                else:
-                    # If invalid, default to Moderate
-                    question_difficulty = "Moderate"
-                    print(f"⚠️ Invalid difficulty '{request.difficulty}', defaulting to 'Moderate'")
+            try:
+                # Check if question contains metadata
+                question_text = mcq_data.get("question", "")
+                if contains_metadata(question_text):
+                    print(f"WARNING: Question {mcq_data.get('id', 'unknown')} contains metadata keywords: {question_text[:100]}")
+                    raise HTTPException(
+                        status_code=500,
+                        detail=f"Failed to generate MCQs: Question contains document metadata. Please try again."
+                    )
                 
-                # Always use the normalized case difficulty, completely ignore what AI returned
-                print(f"🔒 Forcing difficulty to case difficulty: '{question_difficulty}' (ignoring AI's '{mcq_data.get('difficulty', 'unknown')}')")
-            else:
-                question_difficulty = mcq_data.get("difficulty", "Moderate")
-                # Normalize AI's difficulty too
-                difficulty_lower = question_difficulty.lower().strip()
-                if difficulty_lower == "easy":
-                    question_difficulty = "Easy"
-                elif difficulty_lower == "moderate":
-                    question_difficulty = "Moderate"
-                elif difficulty_lower == "hard":
-                    question_difficulty = "Hard"
+                # Validate and normalize options
+                if "options" not in mcq_data or not isinstance(mcq_data["options"], list):
+                    print(f"ERROR: Invalid options format in MCQ {mcq_data.get('id', 'unknown')}")
+                    raise HTTPException(
+                        status_code=500,
+                        detail=f"Failed to generate MCQs: Invalid question format received. Please try again."
+                    )
+                
+                options = []
+                for opt_idx, opt in enumerate(mcq_data["options"]):
+                    # Ensure option is a dictionary, not a string
+                    if isinstance(opt, str):
+                        print(f"ERROR: Option {opt_idx} is a string instead of dict: {opt[:100]}")
+                        print(f"ERROR: Full options array: {mcq_data['options']}")
+                        raise HTTPException(
+                            status_code=500,
+                            detail=f"Failed to generate MCQs: Invalid option format (option is a string). Please try again."
+                        )
+                    
+                    if not isinstance(opt, dict):
+                        print(f"ERROR: Option {opt_idx} is not a dict: type={type(opt)}, value={opt}")
+                        print(f"ERROR: Full options array: {mcq_data['options']}")
+                        raise HTTPException(
+                            status_code=500,
+                            detail=f"Failed to generate MCQs: Invalid option format (expected dictionary). Please try again."
+                        )
+                    
+                    # Try to normalize option format - handle variations
+                    normalized_opt = {}
+                    
+                    # Handle different field names
+                    if "id" in opt:
+                        normalized_opt["id"] = str(opt["id"])
+                    elif "option_id" in opt:
+                        normalized_opt["id"] = str(opt["option_id"])
+                    elif "letter" in opt:
+                        normalized_opt["id"] = str(opt["letter"])
+                    else:
+                        # Try to infer from position
+                        normalized_opt["id"] = ["A", "B", "C", "D", "E"][opt_idx] if opt_idx < 5 else str(opt_idx)
+                    
+                    if "text" in opt:
+                        normalized_opt["text"] = str(opt["text"])
+                    elif "option_text" in opt:
+                        normalized_opt["text"] = str(opt["option_text"])
+                    elif "content" in opt:
+                        normalized_opt["text"] = str(opt["content"])
+                    else:
+                        print(f"ERROR: Option {opt_idx} missing text field. Available keys: {list(opt.keys())}")
+                        print(f"ERROR: Option value: {opt}")
+                        raise HTTPException(
+                            status_code=500,
+                            detail=f"Failed to generate MCQs: Option missing text content. Please try again."
+                        )
+                    
+                    # Check if option text contains metadata
+                    if contains_metadata(normalized_opt["text"]):
+                        print(f"WARNING: Option {opt_idx} in question {mcq_data.get('id', 'unknown')} contains metadata: {normalized_opt['text'][:100]}")
+                        raise HTTPException(
+                            status_code=500,
+                            detail=f"Failed to generate MCQs: Option contains document metadata. Please try again."
+                        )
+                    
+                    if "is_correct" in opt:
+                        normalized_opt["is_correct"] = bool(opt["is_correct"])
+                    elif "correct" in opt:
+                        normalized_opt["is_correct"] = bool(opt["correct"])
+                    elif "isCorrect" in opt:
+                        normalized_opt["is_correct"] = bool(opt["isCorrect"])
+                    else:
+                        # Default to false if not specified
+                        normalized_opt["is_correct"] = False
+                        print(f"WARNING: Option {opt_idx} missing is_correct field, defaulting to False")
+                    
+                    try:
+                        options.append(MCQOption(**normalized_opt))
+                    except Exception as e:
+                        print(f"ERROR: Failed to create MCQOption from: {opt}")
+                        print(f"ERROR: Normalized to: {normalized_opt}")
+                        print(f"ERROR: Exception: {e}")
+                        raise HTTPException(
+                            status_code=500,
+                            detail=f"Failed to generate MCQs: Error processing question options. Please try again."
+                        )
+                
+                # BULLETPROOF: Completely ignore AI's difficulty and force case difficulty
+                if request.difficulty:
+                    # Normalize difficulty to ensure proper capitalization (Easy, Moderate, Hard)
+                    difficulty_lower = request.difficulty.lower().strip()
+                    if difficulty_lower == "easy":
+                        question_difficulty = "Easy"
+                    elif difficulty_lower == "moderate":
+                        question_difficulty = "Moderate"
+                    elif difficulty_lower == "hard":
+                        question_difficulty = "Hard"
+                    else:
+                        # If invalid, default to Moderate
+                        question_difficulty = "Moderate"
+                        print(f"⚠️ Invalid difficulty '{request.difficulty}', defaulting to 'Moderate'")
+                    
+                    # Always use the normalized case difficulty, completely ignore what AI returned
+                    print(f"🔒 Forcing difficulty to case difficulty: '{question_difficulty}' (ignoring AI's '{mcq_data.get('difficulty', 'unknown')}')")
                 else:
-                    question_difficulty = "Moderate"
-            
-            question = MCQQuestion(
-                id=mcq_data["id"],
-                question=mcq_data["question"],
-                options=options,
-                explanation=mcq_data["explanation"],
-                difficulty=question_difficulty  # This will ALWAYS be the case difficulty
-            )
-            questions.append(question)
+                    question_difficulty = mcq_data.get("difficulty", "Moderate")
+                    # Normalize AI's difficulty too
+                    difficulty_lower = question_difficulty.lower().strip()
+                    if difficulty_lower == "easy":
+                        question_difficulty = "Easy"
+                    elif difficulty_lower == "moderate":
+                        question_difficulty = "Moderate"
+                    elif difficulty_lower == "hard":
+                        question_difficulty = "Hard"
+                    else:
+                        question_difficulty = "Moderate"
+                
+                question = MCQQuestion(
+                    id=mcq_data["id"],
+                    question=mcq_data["question"],
+                    options=options,
+                    explanation=mcq_data["explanation"],
+                    difficulty=question_difficulty  # This will ALWAYS be the case difficulty
+                )
+                questions.append(question)
+            except HTTPException:
+                # Re-raise HTTPExceptions as-is
+                raise
+            except Exception as e:
+                # Catch any other unexpected errors
+                print(f"ERROR: Unexpected error processing MCQ {mcq_data.get('id', 'unknown')}: {e}")
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Failed to generate MCQs: Error processing question. Please try again."
+                )
         
         # Final validation: Ensure ALL questions have the same difficulty
         if request.difficulty:
@@ -3448,32 +3808,32 @@ Return a SINGLE JSON object:
   "title": "{case_title_str}",
   "difficulty": "{case_difficulty_str}",
   "key_concept": "{key_concept}",
-  "key_concept_summary": "2–4 sentences explaining the clinical concept behind THIS SPECIFIC case, referencing the case title and unique patient details.",
+  "key_concept_summary": "A comprehensive explanation (MUST be 150-250 words, no less) explaining the clinical concept behind THIS SPECIFIC case, referencing the case title and unique patient details. Write in a clear, university-student-friendly style.",
   "learning_objectives": [
-    "Objective 1 specific to this case's unique scenario...",
-    "Objective 2 specific to this case's unique scenario...",
-    "Objective 3 specific to this case's unique scenario..."
+    "Objective 1 (MUST be 150-250 words, no less) specific to this case's unique scenario, written for university students with clear explanations...",
+    "Objective 2 (MUST be 150-250 words, no less) specific to this case's unique scenario, written for university students with clear explanations...",
+    "Objective 3 (MUST be 150-250 words, no less) specific to this case's unique scenario, written for university students with clear explanations..."
   ],
-  "core_pathophysiology": "Explain the mechanism or physiology relevant to THIS SPECIFIC case, tied to the specific vignette details (patient age, gender, presentation).",
+  "core_pathophysiology": "A detailed explanation (MUST be 150-250 words, no less) of the mechanism or physiology relevant to THIS SPECIFIC case, tied to the specific vignette details (patient age, gender, presentation). Write in a clear, university-student-friendly style that explains the underlying mechanisms in an accessible way.",
   "clinical_reasoning_steps": [
-    "Step 1: ... reasoning tied to SPECIFIC case clues from this case...",
-    "Step 2: ...",
-    "Step 3: ..."
+    "Step 1 (MUST be 150-250 words, no less): Detailed reasoning tied to SPECIFIC case clues from this case, written for university students with clear explanations of the clinical thinking process...",
+    "Step 2 (MUST be 150-250 words, no less): Detailed reasoning written for university students with clear explanations...",
+    "Step 3 (MUST be 150-250 words, no less): Detailed reasoning written for university students with clear explanations..."
   ],
   "red_flags_and_pitfalls": [
-    "Pitfall 1...",
-    "Pitfall 2..."
+    "Pitfall 1 (MUST be 150-250 words, no less): Detailed explanation written for university students, explaining why this is a common mistake and how to avoid it...",
+    "Pitfall 2 (MUST be 150-250 words, no less): Detailed explanation written for university students, explaining why this is a common mistake and how to avoid it..."
   ],
   "differential_diagnosis_framework": [
-    "Dx 1: justification...",
-    "Dx 2: justification...",
-    "Dx 3: justification..."
+    "Dx 1 (MUST be 150-250 words, no less): Detailed justification written for university students, explaining why this diagnosis is considered, what supports it, and what distinguishes it from other possibilities...",
+    "Dx 2 (MUST be 150-250 words, no less): Detailed justification written for university students, explaining why this diagnosis is considered, what supports it, and what distinguishes it from other possibilities...",
+    "Dx 3 (MUST be 150-250 words, no less): Detailed justification written for university students, explaining why this diagnosis is considered, what supports it, and what distinguishes it from other possibilities..."
   ],
   "important_labs_imaging_to_know": [
-    "Lab/imaging 1 and why it matters...",
-    "Lab/imaging 2..."
+    "Lab/imaging 1 (MUST be 150-250 words, no less): Detailed explanation written for university students, explaining what this test is, why it matters for this case, what it shows, and its clinical significance...",
+    "Lab/imaging 2 (MUST be 150-250 words, no less): Detailed explanation written for university students, explaining what this test is, why it matters for this case, what it shows, and its clinical significance..."
   ],
-  "why_this_case_matters": "Short explanation connecting the case to real-world practice and exam relevance."
+  "why_this_case_matters": "A comprehensive explanation (MUST be 150-250 words, no less) connecting the case to real-world practice and exam relevance, written in a clear, university-student-friendly style that explains why mastering this case is important for medical education and clinical practice."
 }}
 
 RULES:
@@ -3483,6 +3843,8 @@ RULES:
 - ALL content must be SPECIFIC to this case - reference the case title, patient demographics, and specific clinical details.
 - Do NOT generate generic concepts that could apply to multiple cases.
 - Tie every learning objective, reasoning step, and concept to the SPECIFIC details of this case.
+- CRITICAL WORD COUNT REQUIREMENT: Each section (key_concept_summary, each learning_objective, core_pathophysiology, each clinical_reasoning_step, each red_flags_and_pitfalls item, each differential_diagnosis_framework item, each important_labs_imaging_to_know item, and why_this_case_matters) MUST contain a minimum of 150 words and should aim for 150-250 words. Count the words carefully - sections with less than 150 words are NOT acceptable.
+- Give it to me like I am a university student - use accessible language while maintaining scientific accuracy.
 """
                 
                 system_prompt = identify_concepts_prompt
@@ -3492,12 +3854,12 @@ RULES:
                 response = openai_client.chat.completions.create(
                     model="gpt-4.1",
                     messages=[
-                        {"role": "system", "content": "Medical educator. Generate key concepts for a medical case with clear sections. Return valid JSON only."},
+                        {"role": "system", "content": "Medical educator. Generate key concepts for a medical case with clear sections. Return valid JSON only. CRITICAL: Each section MUST be 150-250 words minimum (no less than 150 words). Give it to me like I am a university student - write in a clear, accessible, and educational style appropriate for university-level medical education."},
                         {"role": "user", "content": system_prompt}
                     ],
                     temperature=0.1,  # Very low temperature for maximum accuracy and consistency
-                    max_tokens=6000,  # Significantly increased for comprehensive multi-paragraph case generation
-                    timeout=180,  # Increased timeout for comprehensive case generation
+                    max_tokens=12000,  # Significantly increased for comprehensive detailed content (150-250 words per section)
+                    timeout=240,  # Increased timeout for comprehensive detailed case generation
                     response_format={"type": "json_object"}  # Force JSON object format for better accuracy
                 )
                 
