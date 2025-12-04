@@ -5463,68 +5463,75 @@ async def send_chat_message(
         if not OPENAI_API_KEY:
             raise HTTPException(status_code=500, detail="OpenAI API key not configured")
     
-    # If document_id is provided, get the document context
+    if not OPENAI_API_KEY or not openai_client:
+        raise HTTPException(status_code=500, detail="OpenAI API key not configured")
+    
+    # Document context (for general chat mode)
     document_context = ""
     document_id = request.document_id or chat.get("document_id")
     if document_id:
         try:
+            doc_obj_id = ObjectId(document_id)
             document = db.documents.find_one({
-                "_id": ObjectId(document_id),
+                "_id": doc_obj_id,
                 "uploaded_by": current_user["id"]
             })
             if document and document.get("content"):
-                document_context = f"\n\nDocument Context:\n{document['content'][:500]}"
+                # Keep this short – it's just background, not to be restated verbatim
+                document_context = document["content"][:1000]
         except Exception:
-            pass
+            # If document fetch fails, we just skip context – no hard failure
+            document_context = ""
     
-    # Check if this is an explore cases request (when case_title is present in request or chat)
+    # Check if this is Explore Case mode
     case_title = request.case_title or chat.get("case_title")
     case_difficulty = None
     case_key_concept = None
     case_description = None
     
-    # Fetch full case details if case_title is provided
     if case_title:
         try:
-            doc_id_str = document_id if document_id else None
-            case_doc = None
-            if doc_id_str:
-                case_doc = db.generated_cases.find_one({
-                    "title": case_title,
-                    "document_id": doc_id_str
-                })
+            # Try to match by (title + document_id) first
+            query = {"title": case_title}
+            if document_id:
+                # NOTE: depending on how you store document_id in generated_cases,
+                # you may need ObjectId(document_id) instead of plain string.
+                query["document_id"] = document_id
+            
+            case_doc = db.generated_cases.find_one(query)
+            
+            # Fallback – just by title if doc-specific lookup fails
             if not case_doc:
-                case_doc = db.generated_cases.find_one({
-                    "title": case_title
-                })
+                case_doc = db.generated_cases.find_one({"title": case_title})
             
             if case_doc:
                 case_difficulty = case_doc.get("difficulty", "Moderate")
-                case_key_concept = ""
-                if case_doc.get("key_points") and len(case_doc.get("key_points", [])) > 0:
-                    case_key_concept = case_doc.get("key_points", [""])[0]
+                # Prefer `key_concept` if your generator stores that
+                case_key_concept = case_doc.get("key_concept") or ""
+                # Backwards compatibility if you have an older `key_points` array
+                if not case_key_concept and case_doc.get("key_points"):
+                    case_key_concept = case_doc["key_points"][0]
                 case_description = case_doc.get("description", "")
         except Exception as e:
             print(f"⚠️ Warning: Could not fetch case details: {e}")
-            # Continue with just case_title if fetch fails
         
-        # Use default values if case details not found
+        # Defaults if anything missing
         if not case_difficulty:
             case_difficulty = "Moderate"
-        if not case_key_concept:
+        if case_key_concept is None:
             case_key_concept = ""
-        if not case_description:
+        if case_description is None:
             case_description = ""
     
-    try:
-        # Use OpenAI GPT-4 mini
-        if not openai_client:
-            raise Exception("OpenAI client not initialized")
-        
-        if case_title:
-            # Explore Cases Mode: Conversational format with case-specific context
-            explore_case_system_prompt = f"""
-You are an expert Medical Educator having a natural, back‑and‑forth conversation with a medical student about a clinical case.
+    # Build messages for OpenAI (Explore Case vs General Chat)
+    messages = []
+    
+    if case_title:
+        # === EXPLORE CASE MODE (Socratic + Guided + Precise) ===
+        explore_case_system_prompt = f"""
+You are the CaseWise Socratic Clinical Tutor — a blend of a friendly clinical tutor, 
+a teaching attending, and a high‑yield USMLE instructor. Your role is to guide the student 
+through THIS SPECIFIC CASE using clear answers + short, targeted Socratic questions.
 
 ==============================
 
@@ -5534,7 +5541,7 @@ CASE CONTEXT
 
 Case Title: {case_title}
 
-Difficulty: {case_difficulty}
+Case Difficulty: {case_difficulty}
 
 Key Concept: {case_key_concept}
 
@@ -5542,64 +5549,138 @@ Case Description: {case_description}
 
 ==============================
 
-BEHAVIOR RULES
+CORE BEHAVIOR RULES
 
 ==============================
 
-Always:
+1. DIRECT ANSWER FIRST  
 
-- Directly answer the student's question conversationally.
+   - Always answer the student's question immediately and clearly (1–3 sentences).  
 
-- Then expand with relevant clinical reasoning.
+   - The answer must be precise and tied to THIS case.
 
-- Speak warmly and naturally — no lecturing tone.
+2. SOCRATIC QUESTION SECOND  
 
-- Refer to details from THIS case.
+   - Follow your answer with one short guiding question.  
 
-- Interpret vague questions generously.
+   - It should help the student think, not quiz them aggressively.  
 
-- No bullet points, no numbered lists, no headings.
+   - Examples:
 
-- Use flowing, natural paragraphs only.
+       "Which finding in the case supports that most strongly?"
 
-Your goal:
+       "What makes you think that could be happening?"
 
-Help the student understand the case as if you're sitting beside them, guiding their reasoning.
+       "What part of the presentation points you in that direction?"
 
-Input:
+3. ADAPTIVE DEPTH  
 
-Student Question → {request.message}
+   - Simple question → concise response.  
 
-{document_context}
+   - Complex question → deeper explanation, but ALWAYS focused, relevant, and non‑rambling.  
+
+   - Never give long lectures or repeat the entire case.
+
+4. NO FLUFF, NO TANGENTS  
+
+   - Only include details relevant to the question asked.  
+
+   - Avoid public‑health essays, epidemiology monologues, or generic textbook material.
+
+5. HUMAN, SUPPORTIVE TONE  
+
+   - Warm, conversational, curious.  
+
+   - Sound like a real clinician teaching during rounds.  
+
+   - Encourage understanding, not memorization.
+
+6. OPTIONAL CHECK-FOR-UNDERSTANDING  
+
+   - The Socratic question counts as your check‑in.  
+
+   - Do NOT ask multiple questions.  
+
+   - If the student wants direct answers only, stop asking questions.
+
+7. GROUNDED IN THIS CASE ONLY  
+
+   - You may reference standard medical reasoning only to clarify case details.
+
+   - Do NOT invent symptoms, labs, or diagnoses not supported by the vignette.
+
+8. STYLE RULES  
+
+   - No bullet points, no numbered lists, no headings.  
+
+   - Smooth, conversational paragraphs only.
+
+==============================
+
+GOOD VS. BAD RESPONSE EXAMPLES
+
+==============================
+
+[GOOD RESPONSE — short, relevant, Socratic]
+
+Student: "How old is the patient?"
+
+Tutor: "He's a 5‑year‑old boy, which is important because children his age are more prone to severe complications. Which part of his presentation makes that risk stand out to you?"
+
+[GOOD RESPONSE — deeper question, still focused]
+
+Student: "Why is vitamin A important here?"
+
+Tutor: "Vitamin A reduces measles‑related morbidity by supporting epithelial health and immune function. In a child this young, deficiency increases the risk of complications. Which symptom in his case suggests he might benefit most from supplementation?"
+
+==============================
+
+YOUR JOB
+
+==============================
+
+Answer clearly, teach concisely, and guide the student with ONE well‑chosen Socratic question 
+that helps them reason through THIS case.
+
 """
-            
-            system_prompt = explore_case_system_prompt
-            system_role = "You are an expert Medical Educator having a natural, back-and-forth conversation with a medical student about a clinical case. Respond in flowing paragraphs without bullet points or structured formatting - just like a natural conversation."
-        else:
-            # General chat mode: standard medical assistant
-            system_prompt = f"""Medical AI assistant. Provide concise, accurate answers.
-
-Question: {request.message}
-{document_context}
-
-Instructions:
-- Give direct, clear answers (2-3 paragraphs max)
-- Use medical terms with brief explanations
-- Focus on key points: diagnosis, treatment, clinical significance
-- Use bullet points for clarity
-- Be precise, avoid unnecessary detail"""
-            
-            system_role = "Medical AI assistant. Provide concise, accurate answers."
         
-        # Generate response from OpenAI
+        messages.append({"role": "system", "content": explore_case_system_prompt})
+        
+        # (Optional) include conversation history so it feels truly back‑and‑forth
+        recent_messages = list(
+            db.chat_messages.find({"chat_id": chat_id}).sort("timestamp", -1).limit(6)
+        )
+        for m in reversed(recent_messages):
+            messages.append({"role": "user", "content": m["message"]})
+            messages.append({"role": "assistant", "content": m["response"]})
+        
+        # Current student question as the actual user message
+        messages.append({"role": "user", "content": request.message})
+        
+        max_tokens = 450  # we don't want giant essays in explore mode
+        
+    else:
+        # === GENERAL CHAT MODE ===
+        system_prompt = "You are a concise, accurate medical AI assistant. Provide clear, focused answers."
+        
+        messages.append({"role": "system", "content": system_prompt})
+        
+        user_content = request.message
+        
+        if document_context:
+            user_content += f"\n\nContext (you may use this but do not repeat it verbatim):\n{document_context[:1000]}"
+        
+        messages.append({"role": "user", "content": user_content})
+        
+        max_tokens = 600
+    
+    # Call OpenAI
+    try:
         response = openai_client.chat.completions.create(
-            model="gpt-4.1",
-            messages=[
-                {"role": "system", "content": system_role},
-                {"role": "user", "content": system_prompt}
-            ],
+            model="gpt-4o-mini",
+            messages=messages,
             temperature=0.5,
-            max_tokens=800,
+            max_tokens=max_tokens,
             timeout=60
         )
         ai_response = response.choices[0].message.content
@@ -5607,28 +5688,28 @@ Instructions:
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error generating AI response: {str(e)}")
     
-    # Save message to database
+    # Save message to DB
     message_doc = {
         "chat_id": chat_id,
         "message": request.message,
         "response": ai_response,
         "document_id": document_id,
-        "timestamp": datetime.now()
+        "timestamp": datetime.utcnow()
     }
     
     result = db.chat_messages.insert_one(message_doc)
     
-    # Update chat message count and timestamp
+    # Update chat meta
     db.chats.update_one(
         {"_id": ObjectId(chat_id)},
         {
             "$inc": {"message_count": 1},
-            "$set": {"updated_at": datetime.now()}
+            "$set": {"updated_at": datetime.utcnow()}
         }
     )
     
     message_doc["id"] = str(result.inserted_id)
-    del message_doc["_id"]
+    message_doc.pop("_id", None)
     
     return message_doc
 
