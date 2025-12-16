@@ -265,7 +265,48 @@ export function Dashboard({}: DashboardProps) {
   const [isLoadingChats, setIsLoadingChats] = useState(true);
   const [isLoadingChatsInProgress, setIsLoadingChatsInProgress] =
     useState(false);
+  const [isCreatingChat, setIsCreatingChat] = useState(false);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+
+  // Compute if new chats can be created based on current state (reactive)
+  // BLOCK creation if there are ANY empty chats (starting with "Chat" and no file)
+  const canCreateNewChat = useMemo(() => {
+    // Allow first chat
+    if (chats.length === 0) {
+      return true;
+    }
+
+    // Check if there are ANY empty chats (starting with "Chat" and no file)
+    const hasEmptyChat = chats.some(
+      (chat) =>
+        chat.name &&
+        chat.name.trim().toLowerCase().startsWith("chat") &&
+        (!chat.document_id ||
+          chat.document_id.trim() === "" ||
+          !chat.document_filename ||
+          chat.document_filename.trim() === "")
+    );
+
+    // BLOCK if there are empty chats - user must use existing empty chats first
+    const canCreate = !hasEmptyChat;
+    console.log("🔍 canCreateNewChat computed:", {
+      chatsCount: chats.length,
+      hasEmptyChat,
+      canCreate,
+      emptyChats: chats
+        .filter(
+          (chat) =>
+            chat.name &&
+            chat.name.trim().toLowerCase().startsWith("chat") &&
+            (!chat.document_id ||
+              chat.document_id.trim() === "" ||
+              !chat.document_filename ||
+              chat.document_filename.trim() === "")
+        )
+        .map((c) => c.name),
+    });
+    return canCreate;
+  }, [chats]);
   const [selectedDocument, setSelectedDocument] = useState<Document | null>(
     null
   );
@@ -1180,23 +1221,208 @@ export function Dashboard({}: DashboardProps) {
   };
 
   const createNewChat = async (documentId?: string) => {
-    // Check if we have unsaved progress before creating new chat
-    if (hasUnsavedProgress) {
-      handleNavigationAttempt(async () => {
-        await performCreateNewChat(documentId);
-      });
+    // Prevent multiple simultaneous chat creations - set flag immediately
+    if (isCreatingChat) {
+      console.log("⏳ Chat creation already in progress, skipping...");
       return;
     }
 
-    await performCreateNewChat(documentId);
+    // CRITICAL: Check synchronously first before any async operations
+    console.log("🔍 canCreateNewChat check:", {
+      canCreateNewChat,
+      chatsCount: chats.length,
+      chats: chats.map((c) => ({
+        name: c.name,
+        hasFile: !!(c.document_id && c.document_filename),
+        startsWithChat: c.name?.toLowerCase().startsWith("chat"),
+      })),
+    });
+
+    if (!canCreateNewChat) {
+      console.log(
+        "❌ BLOCKED: Cannot create new chat - all existing chats are empty"
+      );
+      const errorMsg =
+        "Please upload a file in an existing chat before creating a new chat.";
+      setUploadError(errorMsg);
+      // Show alert for better visibility
+      if (typeof window !== "undefined") {
+        alert(errorMsg);
+      }
+      setIsCreatingChat(false); // Make sure flag is cleared
+      return;
+    }
+
+    // Set flag immediately to prevent concurrent calls
+    setIsCreatingChat(true);
+
+    try {
+      // Fetch fresh chats from API to ensure we have the latest data
+      const freshChats = await apiService.getUserChats();
+      console.log("🔄 Fetched fresh chats for validation:", freshChats.length);
+      console.log(
+        "🔄 Chat details:",
+        freshChats.map((c) => ({
+          id: c.id,
+          name: c.name,
+          has_document_id: !!c.document_id,
+          document_id: c.document_id,
+          has_document_filename: !!c.document_filename,
+          document_filename: c.document_filename,
+        }))
+      );
+
+      // Check if there are ANY empty chats (starting with "Chat" and no file)
+      const hasEmptyChat = freshChats.some(
+        (chat) =>
+          chat.name &&
+          chat.name.trim().toLowerCase().startsWith("chat") &&
+          (!chat.document_id ||
+            chat.document_id.trim() === "" ||
+            !chat.document_filename ||
+            chat.document_filename.trim() === "")
+      );
+
+      console.log("🔄 Has empty chat:", hasEmptyChat);
+      console.log("🔄 Fresh chats length:", freshChats.length);
+
+      // BLOCK if there are empty chats - user must use existing empty chats first
+      if (freshChats.length > 0 && hasEmptyChat) {
+        console.log(
+          "❌ BLOCKING: Cannot create new chat - there are existing empty chats. Please upload a file to an existing chat first."
+        );
+        setUploadError(
+          "Please upload a file to an existing empty chat before creating a new chat."
+        );
+        setIsCreatingChat(false);
+        return;
+      }
+
+      // Also check local state as additional safeguard
+      const localHasEmptyChat = chats.some(
+        (chat) =>
+          chat.name &&
+          chat.name.trim().toLowerCase().startsWith("chat") &&
+          (!chat.document_id ||
+            chat.document_id.trim() === "" ||
+            !chat.document_filename ||
+            chat.document_filename.trim() === "")
+      );
+
+      if (chats.length > 0 && (localHasEmptyChat || hasEmptyChat)) {
+        console.log(
+          "❌ BLOCKING (local check): Cannot create new chat - there are existing empty chats"
+        );
+        setUploadError(
+          "Please upload a file to an existing empty chat before creating a new chat."
+        );
+        setIsCreatingChat(false);
+        return;
+      }
+
+      console.log("✅ Validation passed, proceeding with chat creation");
+
+      // Check if we have unsaved progress before creating new chat
+      if (hasUnsavedProgress) {
+        handleNavigationAttempt(async () => {
+          await performCreateNewChat(documentId);
+        });
+        return;
+      }
+
+      await performCreateNewChat(documentId);
+    } catch (error) {
+      console.error("Failed to fetch chats for validation:", error);
+      setUploadError("Failed to validate chat creation. Please try again.");
+      setIsCreatingChat(false);
+    } finally {
+      // Only clear flag if we didn't proceed to performCreateNewChat
+      // (performCreateNewChat will handle its own finally block)
+    }
   };
 
   const performCreateNewChat = async (documentId?: string) => {
     try {
+      // Flag is already set in createNewChat, but keep it here for safety
+
+      // Final check: Check both local state AND API to prevent race conditions
+      // Check if there are ANY empty chats
+      const localHasEmptyChat = chats.some(
+        (chat) =>
+          chat.name &&
+          chat.name.trim().toLowerCase().startsWith("chat") &&
+          (!chat.document_id ||
+            chat.document_id.trim() === "" ||
+            !chat.document_filename ||
+            chat.document_filename.trim() === "")
+      );
+
+      // Also fetch fresh chats from API
+      const freshChats = await apiService.getUserChats();
+      console.log("🔒 Final validation - Local chats count:", chats.length);
+      console.log(
+        "🔒 Final validation - Fresh chats count:",
+        freshChats.length
+      );
+
+      const apiHasEmptyChat = freshChats.some(
+        (chat) =>
+          chat.name &&
+          chat.name.trim().toLowerCase().startsWith("chat") &&
+          (!chat.document_id ||
+            chat.document_id.trim() === "" ||
+            !chat.document_filename ||
+            chat.document_filename.trim() === "")
+      );
+
+      console.log(
+        "🔒 Final validation - Local has empty chat:",
+        localHasEmptyChat
+      );
+      console.log("🔒 Final validation - API has empty chat:", apiHasEmptyChat);
+
+      // Block if there are ANY empty chats (from either source)
+      if (localHasEmptyChat || apiHasEmptyChat) {
+        console.log(
+          "❌ FINAL BLOCK: Cannot create new chat - there are existing empty chats"
+        );
+        setUploadError(
+          "Please upload a file to an existing empty chat before creating a new chat."
+        );
+        setIsCreatingChat(false);
+        return;
+      }
+
+      console.log("✅ Final validation passed, creating chat now");
+
+      // CRITICAL: One more check right before API call to prevent race conditions
+      const lastCheckChats = await apiService.getUserChats();
+      const lastCheckHasEmptyChat = lastCheckChats.some(
+        (chat) =>
+          chat.name &&
+          chat.name.trim().toLowerCase().startsWith("chat") &&
+          (!chat.document_id ||
+            chat.document_id.trim() === "" ||
+            !chat.document_filename ||
+            chat.document_filename.trim() === "")
+      );
+
+      if (lastCheckChats.length > 0 && lastCheckHasEmptyChat) {
+        console.log(
+          "❌ LAST CHECK BLOCK: Cannot create - there are existing empty chats"
+        );
+        setUploadError(
+          "Please upload a file to an existing empty chat before creating a new chat."
+        );
+        setIsCreatingChat(false);
+        return;
+      }
+
       const requestData: any = {};
       if (documentId) {
         requestData.document_id = documentId;
       }
+      console.log("🚀 Actually calling API to create chat now");
       const newChat = await apiService.createChat(requestData);
       console.log("📝 New chat created:", newChat);
       console.log("📝 New chat ID:", newChat.id);
@@ -1211,6 +1437,48 @@ export function Dashboard({}: DashboardProps) {
       ) {
         console.error("❌ Invalid chat ID returned from API:", newChat.id);
         setUploadError("Invalid chat ID returned from server");
+        setIsCreatingChat(false);
+        return;
+      }
+
+      // FINAL VALIDATION: Check one more time before adding to state
+      // This prevents race conditions where multiple chats were created
+      const finalValidationChats = await apiService.getUserChats();
+
+      // Count empty chats (starting with "Chat" and no file)
+      const emptyChats = finalValidationChats.filter(
+        (chat) =>
+          chat.name &&
+          chat.name.trim().toLowerCase().startsWith("chat") &&
+          (!chat.document_id ||
+            chat.document_id.trim() === "" ||
+            !chat.document_filename ||
+            chat.document_filename.trim() === "")
+      );
+
+      console.log("🔍 Final validation after API call:", {
+        totalChats: finalValidationChats.length,
+        emptyChats: emptyChats.length,
+        emptyChatNames: emptyChats.map((c) => c.name),
+      });
+
+      // If we have more than 1 empty chat (the one we just created + existing ones), delete the new one
+      if (emptyChats.length > 1) {
+        console.log(
+          "❌ BLOCKING: Too many empty chats detected, deleting the newly created chat"
+        );
+        try {
+          await apiService.deleteChat(newChat.id);
+          console.log("✅ Deleted the newly created empty chat");
+        } catch (deleteError) {
+          console.error("Failed to delete empty chat:", deleteError);
+        }
+        setUploadError(
+          "Please upload a file to an existing empty chat before creating a new chat."
+        );
+        setIsCreatingChat(false);
+        // Refresh chats to get the updated list
+        await loadUserChats();
         return;
       }
 
@@ -1240,10 +1508,13 @@ export function Dashboard({}: DashboardProps) {
       // Clear any previous errors
       setUploadError("");
 
-      // Chat created successfully - no need for additional refresh
+      // Refresh chats from API to ensure consistency
+      await loadUserChats();
     } catch (error) {
       console.error("Failed to create chat:", error);
       setUploadError("Failed to create new chat");
+    } finally {
+      setIsCreatingChat(false);
     }
   };
 
@@ -3207,6 +3478,8 @@ export function Dashboard({}: DashboardProps) {
   ) => {
     // Clear any error states when navigating
     setUploadError("");
+    // Update the view state
+    setCurrentView(view);
     // All views now have routes, so navigate to them
     navigateToView(view);
   };
@@ -3625,7 +3898,19 @@ export function Dashboard({}: DashboardProps) {
             <div className="space-y-4">
               <button
                 onClick={() => createNewChat()}
-                className="bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700 transition-colors text-base font-medium shadow-md"
+                disabled={!canCreateNewChat || isCreatingChat}
+                className={`px-6 py-3 rounded-lg transition-colors text-base font-medium shadow-md ${
+                  !canCreateNewChat || isCreatingChat
+                    ? "bg-gray-400 text-gray-200 cursor-not-allowed"
+                    : "bg-blue-600 text-white hover:bg-blue-700"
+                }`}
+                title={
+                  !canCreateNewChat
+                    ? "Please upload a file in an existing chat first"
+                    : isCreatingChat
+                    ? "Creating chat..."
+                    : "Create New Chat"
+                }
               >
                 Create New Chat
               </button>
@@ -3680,7 +3965,7 @@ export function Dashboard({}: DashboardProps) {
               <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
               <div className="text-center">
                 <h3 className="text-lg font-semibold text-gray-900 mb-2">
-                  Preparing Your Medical Case Content
+                  Generating Cases
                 </h3>
                 <p className="text-gray-600 mb-4">{autoLoadingProgress}</p>
                 <div className="w-64 bg-gray-200 rounded-full h-2 mx-auto">
@@ -3719,6 +4004,43 @@ export function Dashboard({}: DashboardProps) {
                 <h2 className="text-xl font-semibold text-gray-900">
                   Generated Cases
                 </h2>
+                <Button
+                  onClick={async () => {
+                    setUploadError(""); // Clear any errors
+
+                    // Find an empty chat (one without a file) to show upload area
+                    const emptyChat = chats.find(
+                      (chat) =>
+                        (!chat.document_id ||
+                          chat.document_id.trim() === "" ||
+                          !chat.document_filename ||
+                          chat.document_filename.trim() === "") &&
+                        chat.id !== activeChat // Don't select the current chat if it's the only empty one
+                    );
+
+                    if (emptyChat) {
+                      // Switch to empty chat to show upload area
+                      console.log("🔄 Switching to empty chat:", emptyChat.id);
+                      await handleChatSelect(emptyChat.id);
+                      return;
+                    }
+
+                    // If no empty chat exists but we can create one, try to create it
+                    if (canCreateNewChat && !isCreatingChat) {
+                      console.log("🔄 No empty chat found, creating new one");
+                      await createNewChat();
+                      return;
+                    }
+
+                    // If we can't create a new chat and no empty chat exists,
+                    // just navigate to main view - it will show the current chat's content
+                    console.log("🔄 Navigating to main view");
+                    setCurrentViewWithPersistence("main");
+                  }}
+                  className="bg-gray-700 hover:bg-gray-800 text-white font-medium px-4 py-2 rounded-md"
+                >
+                  Back to Home
+                </Button>
               </div>
               <div className="mb-6">
                 <p className="text-gray-700">Select a case to work on:</p>
@@ -5478,6 +5800,8 @@ export function Dashboard({}: DashboardProps) {
         activeChat={activeChat}
         handleChatSelect={handleChatSelect}
         onCreateNewChat={() => createNewChat()}
+        isCreatingChat={isCreatingChat}
+        canCreateNewChat={canCreateNewChat}
         onDeleteChat={deleteChat}
         onLogout={handleLogout}
       />

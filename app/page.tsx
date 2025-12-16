@@ -43,8 +43,8 @@ function AuthPageContent() {
         console.log("🔄 Redirecting admin user to analytics");
         router.push("/dashboard/analytics");
       } else {
-        console.log("🔄 Redirecting regular user to dashboard");
-        router.push("/dashboard");
+        console.log("🔄 Redirecting regular user to analytics");
+        router.push("/dashboard/analytics");
       }
     }, 100); // Small delay to ensure user data is loaded
 

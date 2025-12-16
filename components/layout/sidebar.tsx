@@ -50,6 +50,8 @@ interface SidebarProps {
   onCreateNewChat: () => void;
   onDeleteChat: (chatId: string) => Promise<void> | void;
   onLogout: () => void;
+  isCreatingChat?: boolean;
+  canCreateNewChat?: boolean;
 }
 
 function NotificationBadge() {
@@ -86,6 +88,8 @@ export function Sidebar({
   onCreateNewChat,
   onDeleteChat,
   onLogout,
+  isCreatingChat = false,
+  canCreateNewChat = true,
 }: SidebarProps) {
   const { user } = useAuth();
   const [sidebarExpanded, setSidebarExpanded] = useState(true);
@@ -156,8 +160,19 @@ export function Sidebar({
           <div className="flex gap-1">
             <button
               onClick={onCreateNewChat}
-              className="text-gray-400 hover:text-blue-600 text-sm px-2 py-1 rounded hover:bg-blue-50"
-              title="New Chat"
+              disabled={isCreatingChat || !canCreateNewChat}
+              className={`text-sm px-2 py-1 rounded transition-colors ${
+                isCreatingChat || !canCreateNewChat
+                  ? "text-gray-300 cursor-not-allowed"
+                  : "text-gray-400 hover:text-blue-600 hover:bg-blue-50"
+              }`}
+              title={
+                isCreatingChat
+                  ? "Creating chat..."
+                  : !canCreateNewChat
+                  ? "Please upload a file in an existing chat first"
+                  : "New Chat"
+              }
             >
               + New
             </button>
