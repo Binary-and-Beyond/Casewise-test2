@@ -668,14 +668,32 @@ class ApiService {
     return this.handleResponse<User>(response);
   }
 
-  async getAllUsers(): Promise<{ users: any[] }> {
-    const response = await fetch(`${API_BASE_URL}/admin/users`, {
-      method: "GET",
-      headers: this.getHeaders(),
-      mode: "cors",
-      credentials: "include",
-    });
-    return this.handleResponse<{ users: any[] }>(response);
+  async getAllUsers(
+    limit: number = 50,
+    skip: number = 0
+  ): Promise<{
+    users: any[];
+    total: number;
+    skip: number;
+    limit: number;
+    has_more: boolean;
+  }> {
+    const response = await fetch(
+      `${API_BASE_URL}/admin/users?limit=${limit}&skip=${skip}`,
+      {
+        method: "GET",
+        headers: this.getHeaders(),
+        mode: "cors",
+        credentials: "include",
+      }
+    );
+    return this.handleResponse<{
+      users: any[];
+      total: number;
+      skip: number;
+      limit: number;
+      has_more: boolean;
+    }>(response);
   }
 
   // Document endpoints
@@ -884,11 +902,18 @@ class ApiService {
   // Notification endpoints
   async getNotifications(
     limit: number = 50,
+    skip: number = 0,
     unreadOnly: boolean = false
-  ): Promise<any[]> {
+  ): Promise<{
+    notifications: any[];
+    total: number;
+    skip: number;
+    limit: number;
+    has_more: boolean;
+  }> {
     const token = this.getAuthToken();
     const response = await fetch(
-      `${API_BASE_URL}/notifications?limit=${limit}&unread_only=${unreadOnly}`,
+      `${API_BASE_URL}/notifications?limit=${limit}&skip=${skip}&unread_only=${unreadOnly}`,
       {
         method: "GET",
         headers: {
@@ -899,7 +924,13 @@ class ApiService {
         credentials: "include",
       }
     );
-    return this.handleResponse<any[]>(response);
+    return this.handleResponse<{
+      notifications: any[];
+      total: number;
+      skip: number;
+      limit: number;
+      has_more: boolean;
+    }>(response);
   }
 
   async markNotificationRead(notificationId: string): Promise<any> {

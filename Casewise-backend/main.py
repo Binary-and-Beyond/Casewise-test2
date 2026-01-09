@@ -1376,14 +1376,21 @@ def logout():
     return {"message": "Logged out successfully"}
 
 @app.get("/admin/users")
-def get_all_users(current_user: dict = Depends(get_current_user)):
-    """Get all users for admin analytics - admin only"""
+def get_all_users(
+    current_user: dict = Depends(get_current_user),
+    limit: int = 50,
+    skip: int = 0
+):
+    """Get all users for admin analytics with pagination - admin only"""
     # Check if user is admin
     if current_user.get("role") != "admin":
         raise HTTPException(status_code=403, detail="Admin access required")
     
     try:
-        # Get all users from database
+        # Get total count for pagination info
+        total_count = db.users.count_documents({})
+        
+        # Get paginated users from database
         users_cursor = db.users.find({}, {
             "_id": 1,
             "email": 1,
@@ -1397,7 +1404,7 @@ def get_all_users(current_user: dict = Depends(get_current_user)):
             "mcq_attempted": 1,
             "total_questions_correct": 1,
             "total_questions_attempted": 1
-        })
+        }).skip(skip).limit(limit)
         
         users = []
         for user in users_cursor:
@@ -1505,7 +1512,13 @@ def get_all_users(current_user: dict = Depends(get_current_user)):
             }
             users.append(user_data)
         
-        return {"users": users}
+        return {
+            "users": users,
+            "total": total_count,
+            "skip": skip,
+            "limit": limit,
+            "has_more": skip + len(users) < total_count
+        }
         
     except Exception as e:
         print(f"Error fetching users: {e}")
@@ -1834,23 +1847,29 @@ async def upload_profile_image(
         )
 
 # Notification endpoints
-@app.get("/notifications", response_model=List[NotificationResponse])
+@app.get("/notifications")
 async def get_notifications(
     current_user: dict = Depends(get_current_user),
     limit: int = 50,
+    skip: int = 0,
     unread_only: bool = False
 ):
-    """Get user notifications"""
+    """Get user notifications with pagination"""
     
-    print(f" Getting notifications for user: {current_user['id']}")
+    print(f" Getting notifications for user: {current_user['id']}, limit={limit}, skip={skip}")
     
     try:
         query = {"user_id": current_user["id"]}
         if unread_only:
             query["is_read"] = False
         
+        # Get total count for pagination info
+        total_count = db.notifications.count_documents(query)
+        
+        # Get paginated notifications
         notifications = list(db.notifications.find(query)
                            .sort("created_at", -1)
+                           .skip(skip)
                            .limit(limit))
         
         notification_list = []
@@ -1877,8 +1896,14 @@ async def get_notifications(
                 "metadata": notification.get("metadata")
             })
         
-        print(f" Found {len(notification_list)} notifications")
-        return notification_list
+        print(f" Found {len(notification_list)} notifications (total: {total_count})")
+        return {
+            "notifications": notification_list,
+            "total": total_count,
+            "skip": skip,
+            "limit": limit,
+            "has_more": skip + len(notification_list) < total_count
+        }
         
     except Exception as e:
         print(f" Error getting notifications: {str(e)}")

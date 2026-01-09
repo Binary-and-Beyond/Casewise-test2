@@ -57,23 +57,47 @@ interface NotificationsProps {
 export function Notifications({ onBack }: NotificationsProps) {
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [hasMore, setHasMore] = useState(false);
+  const [totalCount, setTotalCount] = useState(0);
+  const [currentSkip, setCurrentSkip] = useState(0);
+  const [filter, setFilter] = useState<"all" | "unread" | "read">("all");
+  const PAGE_SIZE = 50;
 
   // Load notifications on component mount
   useEffect(() => {
-    loadNotifications();
+    loadNotifications(true);
   }, []);
 
-  const loadNotifications = async () => {
+  // Reload notifications when filter changes
+  useEffect(() => {
+    loadNotifications(true);
+  }, [filter]);
+
+  const loadNotifications = async (reset: boolean = false) => {
     try {
-      setIsLoading(true);
+      if (reset) {
+        setIsLoading(true);
+        setCurrentSkip(0);
+      } else {
+        setIsLoadingMore(true);
+      }
       setError(null);
-      const data = await apiService.getNotifications(50, false);
-      console.log("Loaded notifications:", data.length, "notifications");
+      
+      const skip = reset ? 0 : currentSkip;
+      // For "read" filter, we fetch all and filter client-side
+      // For "unread" filter, we use unread_only parameter
+      const unreadOnly = filter === "unread";
+      const response = await apiService.getNotifications(PAGE_SIZE, skip, unreadOnly);
+      
+      console.log("Loaded notifications:", response.notifications.length, "notifications");
+      console.log("Total:", response.total, "Has more:", response.has_more);
+      
       // Debug: log the first few notifications' timestamps
-      if (data.length > 0) {
+      if (response.notifications.length > 0) {
         console.log("=== NOTIFICATION TIMESTAMPS DEBUG ===");
-        data.slice(0, 3).forEach((notification, index) => {
+        response.notifications.slice(0, 3).forEach((notification, index) => {
           console.log(`Notification ${index + 1}:`, {
             id: notification.id,
             title: notification.title,
@@ -84,18 +108,29 @@ export function Notifications({ onBack }: NotificationsProps) {
         });
         console.log("=== END DEBUG ===");
       }
-      setNotifications(data);
+      
+      if (reset) {
+        setNotifications(response.notifications);
+      } else {
+        setNotifications((prev) => [...prev, ...response.notifications]);
+      }
+      setHasMore(response.has_more);
+      setTotalCount(response.total);
+      setCurrentSkip(skip + response.notifications.length);
     } catch (err: any) {
       console.error("Failed to load notifications:", err);
       setError(err.message || "Failed to load notifications");
     } finally {
       setIsLoading(false);
+      setIsLoadingMore(false);
     }
   };
 
-  const [filter, setFilter] = useState<"all" | "unread" | "read">("all");
-
-  // Using the imported formatTimeAgo utility function
+  const loadMore = () => {
+    if (!isLoadingMore && hasMore) {
+      loadNotifications(false);
+    }
+  };
 
   const getNotificationType = (type: string) => {
     switch (type) {
@@ -225,7 +260,7 @@ export function Notifications({ onBack }: NotificationsProps) {
           </h1>
           <div className="flex items-center space-x-2">
             <Button
-              onClick={loadNotifications}
+              onClick={() => loadNotifications(true)}
               variant="outline"
               className="text-sm"
               disabled={isLoading}
@@ -249,17 +284,23 @@ export function Notifications({ onBack }: NotificationsProps) {
       <div className="mb-6">
         <div className="flex space-x-1 bg-gray-100 p-1 rounded-lg w-fit">
           <button
-            onClick={() => setFilter("all")}
+            onClick={() => {
+              setFilter("all");
+              setCurrentSkip(0);
+            }}
             className={`px-4 py-2 text-sm font-medium rounded-md transition-colors ${
               filter === "all"
                 ? "bg-white text-gray-900 shadow-sm"
                 : "text-gray-600 hover:text-gray-900"
             }`}
           >
-            All ({notifications.length})
+            All ({filter === "all" ? totalCount : notifications.length})
           </button>
           <button
-            onClick={() => setFilter("unread")}
+            onClick={() => {
+              setFilter("unread");
+              setCurrentSkip(0);
+            }}
             className={`px-4 py-2 text-sm font-medium rounded-md transition-colors ${
               filter === "unread"
                 ? "bg-white text-gray-900 shadow-sm"
@@ -269,7 +310,10 @@ export function Notifications({ onBack }: NotificationsProps) {
             Unread ({unreadCount})
           </button>
           <button
-            onClick={() => setFilter("read")}
+            onClick={() => {
+              setFilter("read");
+              setCurrentSkip(0);
+            }}
             className={`px-4 py-2 text-sm font-medium rounded-md transition-colors ${
               filter === "read"
                 ? "bg-white text-gray-900 shadow-sm"
@@ -286,7 +330,7 @@ export function Notifications({ onBack }: NotificationsProps) {
         <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg">
           <p className="text-red-800">{error}</p>
           <button
-            onClick={loadNotifications}
+            onClick={() => loadNotifications(true)}
             className="mt-2 text-sm text-red-600 hover:text-red-800 underline"
           >
             Try again
@@ -393,6 +437,34 @@ export function Notifications({ onBack }: NotificationsProps) {
                 </div>
               </div>
             ))
+          )}
+          
+          {/* Load More Button */}
+          {hasMore && !isLoading && (
+            <div className="flex justify-center mt-6">
+              <Button
+                onClick={loadMore}
+                variant="outline"
+                disabled={isLoadingMore}
+                className="min-w-[120px]"
+              >
+                {isLoadingMore ? (
+                  <>
+                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-gray-600 mr-2"></div>
+                    Loading...
+                  </>
+                ) : (
+                  `Load More (${totalCount - notifications.length} remaining)`
+                )}
+              </Button>
+            </div>
+          )}
+          
+          {/* Show total count info */}
+          {!isLoading && notifications.length > 0 && (
+            <div className="text-center mt-4 text-sm text-gray-500">
+              Showing {notifications.length} of {totalCount} notifications
+            </div>
           )}
         </div>
       )}

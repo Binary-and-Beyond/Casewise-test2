@@ -37,11 +37,16 @@ export function AdminAnalyticsTable({
   const [originalUsers, setOriginalUsers] = useState<AdminUser[]>([]);
   const [selectedUsers, setSelectedUsers] = useState<Set<string>>(new Set());
   const [isLoading, setIsLoading] = useState(true);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [hasChanges, setHasChanges] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [lastRefreshTime, setLastRefreshTime] = useState<Date | null>(null);
+  const [hasMore, setHasMore] = useState(false);
+  const [totalCount, setTotalCount] = useState(0);
+  const [currentSkip, setCurrentSkip] = useState(0);
+  const PAGE_SIZE = 50;
 
   // Helper function to check if user is currently active (last active is today)
   const isUserActive = (lastActive: string): boolean => {
@@ -95,41 +100,64 @@ export function AdminAnalyticsTable({
   };
 
   // Fetch real user data from API
-  const fetchUsers = async (isAutoRefresh = false) => {
+  const fetchUsers = async (isAutoRefresh = false, reset: boolean = false) => {
     try {
-      if (!isAutoRefresh) {
+      if (reset) {
         setIsLoading(true);
+        setCurrentSkip(0);
+      } else if (!isAutoRefresh) {
+        setIsLoadingMore(true);
       } else {
         setIsRefreshing(true);
       }
       setError(null);
-      const response = await apiService.getAllUsers();
+      
+      const skip = reset ? 0 : currentSkip;
+      const response = await apiService.getAllUsers(PAGE_SIZE, skip);
       const sortedUsers = sortUsersByLastActive(response.users as AdminUser[]);
-      setUsers(sortedUsers);
-      setOriginalUsers(sortedUsers);
+      
+      if (reset) {
+        setUsers(sortedUsers);
+        setOriginalUsers(sortedUsers);
+      } else {
+        setUsers((prev) => [...prev, ...sortedUsers]);
+        setOriginalUsers((prev) => [...prev, ...sortedUsers]);
+      }
+      
+      setHasMore(response.has_more);
+      setTotalCount(response.total);
+      setCurrentSkip(skip + response.users.length);
       setHasChanges(false);
       setLastRefreshTime(new Date());
       console.log("✅ Admin analytics data refreshed successfully");
+      console.log(`Loaded ${response.users.length} users (total: ${response.total}, has more: ${response.has_more})`);
     } catch (error) {
       console.error("Failed to fetch users:", error);
       setError("Failed to load user data. Please try again.");
-      if (!isAutoRefresh) {
+      if (reset) {
         setUsers([]);
         setOriginalUsers([]);
       }
     } finally {
       setIsLoading(false);
+      setIsLoadingMore(false);
       setIsRefreshing(false);
     }
   };
 
+  const loadMore = () => {
+    if (!isLoadingMore && hasMore) {
+      fetchUsers(false, false);
+    }
+  };
+
   useEffect(() => {
-    fetchUsers();
+    fetchUsers(false, true); // Reset pagination on initial load
     
-    // Auto-refresh every 30 seconds to get live updates
+    // Auto-refresh every 30 seconds to get live updates (only refresh first page)
     const refreshInterval = setInterval(() => {
       console.log("🔄 Auto-refreshing admin analytics data...");
-      fetchUsers(true); // Pass true to indicate it's an auto-refresh
+      fetchUsers(true, true); // Pass true to indicate it's an auto-refresh and reset
     }, 30000); // Refresh every 30 seconds
     
     return () => {
@@ -468,6 +496,34 @@ export function AdminAnalyticsTable({
           </table>
         </div>
       </div>
+
+      {/* Load More Button */}
+      {hasMore && !isLoading && (
+        <div className="flex justify-center mt-6 mb-4">
+          <Button
+            onClick={loadMore}
+            variant="outline"
+            disabled={isLoadingMore}
+            className="min-w-[120px]"
+          >
+            {isLoadingMore ? (
+              <>
+                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-gray-600 mr-2"></div>
+                Loading...
+              </>
+            ) : (
+              `Load More (${totalCount - users.length} remaining)`
+            )}
+          </Button>
+        </div>
+      )}
+      
+      {/* Show total count info */}
+      {!isLoading && users.length > 0 && (
+        <div className="text-center mb-4 text-sm text-gray-500">
+          Showing {users.length} of {totalCount} users
+        </div>
+      )}
 
       <div className="flex justify-between items-center pt-6">
         <div className="flex items-center space-x-4">
